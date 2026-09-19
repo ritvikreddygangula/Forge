@@ -26,6 +26,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) routes() {
 	s.mux.HandleFunc("POST /jobs", s.handleSubmitJob)
 	s.mux.HandleFunc("GET /jobs/{id}", s.handleGetJob)
+	s.mux.HandleFunc("GET /internal/worker/poll", s.handleWorkerPoll)
+	s.mux.HandleFunc("POST /internal/worker/result", s.handleWorkerResult)
 }
 
 type submitJobRequest struct {
