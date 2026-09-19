@@ -82,3 +82,22 @@ func TestHandleGetJob_NotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
+
+func TestHandleGetJobLogs(t *testing.T) {
+	store := job.NewMemoryStore()
+	created, _ := store.Create("alpine", []string{"true"}, 10)
+	store.ClaimNext()
+	store.Complete(created.ID, job.StatusSucceeded, "hello\n", "", 0)
+	srv := coordinator.NewServer(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs/"+created.ID+"/logs", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("hello")) {
+		t.Fatalf("expected logs to contain job stdout, got %q", rec.Body.String())
+	}
+}

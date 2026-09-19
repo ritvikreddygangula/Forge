@@ -3,6 +3,7 @@ package coordinator
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/ritvikreddygangula/forge/internal/job"
@@ -26,6 +27,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) routes() {
 	s.mux.HandleFunc("POST /jobs", s.handleSubmitJob)
 	s.mux.HandleFunc("GET /jobs/{id}", s.handleGetJob)
+	s.mux.HandleFunc("GET /jobs/{id}/logs", s.handleGetJobLogs)
 	s.mux.HandleFunc("GET /internal/worker/poll", s.handleWorkerPoll)
 	s.mux.HandleFunc("POST /internal/worker/result", s.handleWorkerResult)
 }
@@ -98,4 +100,15 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(toJobResponse(j))
+}
+
+func (s *Server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	j, err := s.store.Get(id)
+	if err != nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintf(w, "--- stdout ---\n%s\n--- stderr ---\n%s\n", j.Stdout, j.Stderr)
 }
