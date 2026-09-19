@@ -22,7 +22,7 @@ In one terminal, start the coordinator on port 8080:
 make run-coordinator
 ```
 
-You should see output like: `[coordinator] listening on :8080`
+You should see output like: `... INFO coordinator starting addr=:8080`
 
 ### Step 2: Start the worker
 
@@ -49,3 +49,10 @@ curl -s localhost:8080/jobs/$JOB_ID
 ```
 
 Within ~2 seconds, you should see `"status":"succeeded"` in the response, along with the echoed stdout.
+
+Note: the first run will also pull the `alpine:3.19` image, which can take longer than the timeout below allows — for a fresh machine, consider a higher `timeout_seconds` on the first try.
+
+### Environment variables
+
+- `COORDINATOR_ADDR` — the coordinator's listen address (default `:8080`).
+- `COORDINATOR_URL` — the coordinator URL the worker polls and reports to (default `http://localhost:8080`).
