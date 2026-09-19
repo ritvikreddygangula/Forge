@@ -3,6 +3,7 @@ package coordinator
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/ritvikreddygangula/forge/internal/job"
@@ -21,11 +22,15 @@ func (s *Server) handleWorkerPoll(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if j == nil {
-		json.NewEncoder(w).Encode(pollResponse{})
+		if err := json.NewEncoder(w).Encode(pollResponse{}); err != nil {
+			slog.Error("failed to encode response", "error", err)
+		}
 		return
 	}
 	resp := toJobResponse(j)
-	json.NewEncoder(w).Encode(pollResponse{Job: &resp})
+	if err := json.NewEncoder(w).Encode(pollResponse{Job: &resp}); err != nil {
+		slog.Error("failed to encode response", "error", err)
+	}
 }
 
 type reportResultRequest struct {

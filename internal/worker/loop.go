@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/ritvikreddygangula/forge/internal/job"
 )
 
 type Loop struct {
@@ -46,7 +48,7 @@ func (l *Loop) pollOnce(ctx context.Context) (*polledJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var pr pollResponse
 	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
@@ -55,13 +57,21 @@ func (l *Loop) pollOnce(ctx context.Context) (*polledJob, error) {
 	return pr.Job, nil
 }
 
+type reportResultRequest struct {
+	ID       string `json:"id"`
+	Status   string `json:"status"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+}
+
 func (l *Loop) reportResult(ctx context.Context, id, status string, result ExecResult) error {
-	payload, err := json.Marshal(map[string]any{
-		"id":        id,
-		"status":    status,
-		"stdout":    result.Stdout,
-		"stderr":    result.Stderr,
-		"exit_code": result.ExitCode,
+	payload, err := json.Marshal(reportResultRequest{
+		ID:       id,
+		Status:   status,
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
+		ExitCode: result.ExitCode,
 	})
 	if err != nil {
 		return err
@@ -77,7 +87,7 @@ func (l *Loop) reportResult(ctx context.Context, id, status string, result ExecR
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("unexpected status reporting result: %d", resp.StatusCode)
@@ -97,9 +107,9 @@ func (l *Loop) RunOnce(ctx context.Context) error {
 	slog.Info("job claimed", "id", j.ID, "image", j.Image)
 
 	result, execErr := l.Execute(ctx, j.Image, j.Command, j.TimeoutSeconds)
-	status := "succeeded"
+	status := string(job.StatusSucceeded)
 	if execErr != nil || result.ExitCode != 0 {
-		status = "failed"
+		status = string(job.StatusFailed)
 	}
 	if execErr != nil {
 		result.Stderr = result.Stderr + "\n" + execErr.Error()

@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/ritvikreddygangula/forge/internal/job"
 )
@@ -72,6 +74,10 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "image and command are required", http.StatusBadRequest)
 		return
 	}
+	if strings.HasPrefix(req.Image, "-") {
+		http.Error(w, "image must not start with '-'", http.StatusBadRequest)
+		return
+	}
 	if req.TimeoutSeconds <= 0 {
 		req.TimeoutSeconds = 300
 	}
@@ -84,7 +90,9 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toJobResponse(j))
+	if err := json.NewEncoder(w).Encode(toJobResponse(j)); err != nil {
+		slog.Error("failed to encode response", "error", err)
+	}
 }
 
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +107,9 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toJobResponse(j))
+	if err := json.NewEncoder(w).Encode(toJobResponse(j)); err != nil {
+		slog.Error("failed to encode response", "error", err)
+	}
 }
 
 func (s *Server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
@@ -114,5 +124,7 @@ func (s *Server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "--- stdout ---\n%s\n--- stderr ---\n%s\n", j.Stdout, j.Stderr)
+	if _, err := fmt.Fprintf(w, "--- stdout ---\n%s\n--- stderr ---\n%s\n", j.Stdout, j.Stderr); err != nil {
+		slog.Error("failed to write response", "error", err)
+	}
 }
