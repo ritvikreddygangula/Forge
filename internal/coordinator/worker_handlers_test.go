@@ -19,7 +19,9 @@ func TestHandleWorkerPoll_EmptyQueue(t *testing.T) {
 	srv.ServeHTTP(rec, req)
 
 	var got map[string]any
-	json.Unmarshal(rec.Body.Bytes(), &got)
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON response: %v", err)
+	}
 	if got["job"] != nil {
 		t.Fatalf("expected job: null when queue empty, got %v", got["job"])
 	}
@@ -35,7 +37,9 @@ func TestHandleWorkerPoll_ClaimsQueuedJob(t *testing.T) {
 	srv.ServeHTTP(rec, req)
 
 	var got map[string]any
-	json.Unmarshal(rec.Body.Bytes(), &got)
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON response: %v", err)
+	}
 	claimed := got["job"].(map[string]any)
 	if claimed["id"] != created.ID {
 		t.Fatalf("expected claimed job id %s, got %v", created.ID, claimed["id"])
@@ -48,7 +52,9 @@ func TestHandleWorkerPoll_ClaimsQueuedJob(t *testing.T) {
 func TestHandleWorkerResult_Success(t *testing.T) {
 	store := job.NewMemoryStore()
 	created, _ := store.Create("alpine", []string{"true"}, 10)
-	store.ClaimNext()
+	if _, err := store.ClaimNext(); err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
 	srv := coordinator.NewServer(store)
 
 	body := []byte(`{"id":"` + created.ID + `","status":"succeeded","stdout":"ok\n","stderr":"","exit_code":0}`)
@@ -63,6 +69,19 @@ func TestHandleWorkerResult_Success(t *testing.T) {
 	got, _ := store.Get(created.ID)
 	if got.Status != job.StatusSucceeded {
 		t.Fatalf("expected status succeeded, got %s", got.Status)
+	}
+}
+
+func TestHandleWorkerResult_StoreError(t *testing.T) {
+	srv := coordinator.NewServer(failingStore{})
+
+	body := []byte(`{"id":"some-id","status":"succeeded","stdout":"ok\n","stderr":"","exit_code":0}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/worker/result", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

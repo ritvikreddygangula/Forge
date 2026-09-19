@@ -12,7 +12,9 @@ import (
 
 func TestLoop_RunOnce_NoJobQueued(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"job": nil})
+		if err := json.NewEncoder(w).Encode(map[string]any{"job": nil}); err != nil {
+			t.Errorf("failed to encode response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -35,12 +37,16 @@ func TestLoop_RunOnce_ExecutesAndReportsSuccess(t *testing.T) {
 	var reported map[string]any
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /internal/worker/poll", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"job": map[string]any{"id": "job-1", "image": "alpine", "command": []string{"true"}, "timeout_seconds": 10},
-		})
+		}); err != nil {
+			t.Errorf("failed to encode response: %v", err)
+		}
 	})
 	mux.HandleFunc("POST /internal/worker/result", func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&reported)
+		if err := json.NewDecoder(r.Body).Decode(&reported); err != nil {
+			t.Errorf("invalid JSON body: %v", err)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	srv := httptest.NewServer(mux)
@@ -66,12 +72,16 @@ func TestLoop_RunOnce_NonZeroExitReportsFailed(t *testing.T) {
 	var reported map[string]any
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /internal/worker/poll", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"job": map[string]any{"id": "job-2", "image": "alpine", "command": []string{"false"}, "timeout_seconds": 10},
-		})
+		}); err != nil {
+			t.Errorf("failed to encode response: %v", err)
+		}
 	})
 	mux.HandleFunc("POST /internal/worker/result", func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&reported)
+		if err := json.NewDecoder(r.Body).Decode(&reported); err != nil {
+			t.Errorf("invalid JSON body: %v", err)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	srv := httptest.NewServer(mux)
