@@ -106,7 +106,11 @@ func (s *Server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	j, err := s.store.Get(id)
 	if err != nil {
-		http.Error(w, "job not found", http.StatusNotFound)
+		if errors.Is(err, job.ErrNotFound) {
+			http.Error(w, "job not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get job", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain")
