@@ -17,6 +17,7 @@
 - **Sequencing discipline:** Do not skip ahead. Each Part must be fully working before the next starts — this is the spec's core teaching mechanism (never debug more than one new concept at once).
 - **PROGRESS.md:** Update at the end of every session, even short ones, at the repo root.
 - **Resume discipline:** Don't add partial/unfinished bullets to the resume. This project replaces "Deep Research Multi-Agent Systems" only once fully done (Part 6, or Part 9 if the stretch goal is pursued).
+- **Resume honesty (decided 2026-09-20):** This project uses `hashicorp/raft` — a library — not a from-scratch Raft implementation. Resume/interview language must say "implemented leader election and log replication across N coordinators using Raft consensus (hashicorp/raft)" or equivalent, never "implemented Raft from scratch." Any quantitative claim (throughput, failover latency, failure-recovery rate, worker count) must come from an actual benchmark/chaos-test run recorded in PROGRESS.md or a results doc — never written into the resume before it's been measured.
 - **Don't drift toward "another AI pipeline."** This project's whole resume value is being a systems project (concurrency, fault tolerance, Go) that contrasts with the Filing Agent (agentic AI, MCP, evals). Keep the MCP server thin — a delegation interface, not the point of the project.
 - **Part 7 (cloud/Terraform/k3s) is on hold.** Do not provision AWS resources or write Terraform against a real account until that decision is explicitly revisited after Part 6.
 
@@ -133,23 +134,26 @@ Each Part below lists: goal, deliverable (what "done" looks like end-to-end), an
 5. `refactor(job): back the job store with the replay-rebuilt state`
 6. `docs: update PROGRESS.md for Part 3`
 
-### Part 4 — Second coordinator + Raft leader election → branch `part-4-raft`
-**Deliverable:** Two coordinator replicas; killing the leader triggers automatic re-election within the sub-500ms target and in-flight jobs keep progressing.
+### Part 4 — Three-coordinator Raft cluster → branch `part-4-raft`
+**Deliverable:** **Three** coordinator replicas (not two — a 2-node Raft cluster has no real quorum advantage over 1, since both nodes must be up for quorum; 3 is the minimum topology that tolerates a real failure). Killing the leader triggers automatic re-election within the sub-500ms target and in-flight jobs keep progressing. Validated by both process-kill and simulated network-partition fault injection, with a benchmark harness recording actual failover latency across many trials — this is what makes the eventual resume numbers (median failover time, N injected failures, recovery rate) honest rather than invented.
 1. `feat(coordinator): embed hashicorp/raft with single-node bootstrap`
-2. `feat(coordinator): add second replica config and TCP raft transport`
+2. `feat(coordinator): add three-replica config and TCP raft transport`
 3. `feat(coordinator): gate job-assignment writes behind leader check, forward writes to leader`
 4. `test: add leader-election failover test (kill leader, assert re-election and continuity)`
 5. `feat(coordinator): persist raft log/snapshot to a volume`
-6. `docs: update PROGRESS.md for Part 4`
+6. `test: add network-partition fault injection (isolate leader from followers via a blockable transport or iptables/tc, assert the majority partition elects a new leader and the minority side does not)`
+7. `test: add failover benchmark harness — run N repeated leader-kill trials (process-kill and partition), record failover latency per trial, report median/p99`
+8. `docs: update PROGRESS.md for Part 4 with real benchmark results (failover latency distribution, trial count, pass rate)`
 
 ### Part 5 — Multiple workers + real scheduling → branch `part-5-scheduling`
-**Deliverable:** Several workers running concurrently; jobs go to the least-loaded worker; a killed worker's in-flight jobs get reassigned automatically via heartbeat-timeout detection.
+**Deliverable:** Several workers running concurrently; jobs go to the least-loaded worker; a killed worker's in-flight jobs get reassigned automatically via heartbeat-timeout detection. Includes a load-test scaling workers up to a real target count (e.g. 25) and measuring actual sustained throughput — again, so any resume throughput number is a measured result, not an aspiration.
 1. `feat(coordinator): track worker load via heartbeats`
 2. `feat(coordinator): add least-loaded worker assignment strategy`
 3. `feat(coordinator): add heartbeat-timeout failure detection`
 4. `feat(coordinator): reassign in-flight jobs from dead workers`
 5. `test: add multi-worker scheduling and failure-reassignment test`
-6. `docs: update PROGRESS.md for Part 5`
+6. `test: add load-test harness — scale to N workers via docker-compose/k3s replicas, submit a large synthetic job batch, measure sustained jobs/sec and p50/p99 job latency`
+7. `docs: update PROGRESS.md for Part 5 with real load-test results (worker count, sustained throughput, latency)`
 
 ### Branch 6 — Parts 6 + 8 + 9, combined → branch `part-6-interfaces-observability`
 
