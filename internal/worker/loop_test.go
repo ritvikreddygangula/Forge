@@ -2,23 +2,53 @@ package worker_test
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"net"
 	"testing"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/test/bufconn"
+
+	jobv1 "github.com/ritvikreddygangula/forge/api/proto/gen/jobv1"
 	"github.com/ritvikreddygangula/forge/internal/worker"
 )
 
-func TestLoop_RunOnce_NoJobQueued(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode(map[string]any{"job": nil}); err != nil {
-			t.Errorf("failed to encode response: %v", err)
-		}
-	}))
-	defer srv.Close()
+// fakeJobServer is a minimal jobv1.JobServiceServer double, configured per test.
+type fakeJobServer struct {
+	jobv1.UnimplementedJobServiceServer
+	pollResp *jobv1.PollJobResponse
+	reported *jobv1.ReportResultRequest
+}
 
-	l := worker.NewLoop(srv.URL)
+func (f *fakeJobServer) PollJob(ctx context.Context, req *jobv1.PollJobRequest) (*jobv1.PollJobResponse, error) {
+	return f.pollResp, nil
+}
+
+func (f *fakeJobServer) ReportResult(ctx context.Context, req *jobv1.ReportResultRequest) (*jobv1.ReportResultResponse, error) {
+	f.reported = req
+	return &jobv1.ReportResultResponse{}, nil
+}
+
+func newTestLoop(t *testing.T, fake *fakeJobServer) *worker.Loop {
+	t.Helper()
+	lis := bufconn.Listen(1024 * 1024)
+	srv := grpc.NewServer()
+	jobv1.RegisterJobServiceServer(srv, fake)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	l, err := worker.NewLoopWithDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+		return lis.DialContext(ctx)
+	})
+	if err != nil {
+		t.Fatalf("failed to build test loop: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	return l
+}
+
+func TestLoop_RunOnce_NoJobQueued(t *testing.T) {
+	fake := &fakeJobServer{pollResp: &jobv1.PollJobResponse{HasJob: false}}
+	l := newTestLoop(t, fake)
 	executed := false
 	l.Execute = func(ctx context.Context, image string, command []string, timeoutSeconds int) (worker.ExecResult, error) {
 		executed = true
@@ -34,25 +64,11 @@ func TestLoop_RunOnce_NoJobQueued(t *testing.T) {
 }
 
 func TestLoop_RunOnce_ExecutesAndReportsSuccess(t *testing.T) {
-	var reported map[string]any
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /internal/worker/poll", func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"job": map[string]any{"id": "job-1", "image": "alpine", "command": []string{"true"}, "timeout_seconds": 10},
-		}); err != nil {
-			t.Errorf("failed to encode response: %v", err)
-		}
-	})
-	mux.HandleFunc("POST /internal/worker/result", func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&reported); err != nil {
-			t.Errorf("invalid JSON body: %v", err)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	l := worker.NewLoop(srv.URL)
+	fake := &fakeJobServer{pollResp: &jobv1.PollJobResponse{
+		HasJob: true,
+		Job:    &jobv1.Job{Id: "job-1", Image: "alpine", Command: []string{"true"}, TimeoutSeconds: 10},
+	}}
+	l := newTestLoop(t, fake)
 	l.Execute = func(ctx context.Context, image string, command []string, timeoutSeconds int) (worker.ExecResult, error) {
 		return worker.ExecResult{Stdout: "ok\n", ExitCode: 0}, nil
 	}
@@ -60,34 +76,23 @@ func TestLoop_RunOnce_ExecutesAndReportsSuccess(t *testing.T) {
 	if err := l.RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce returned error: %v", err)
 	}
-	if reported["status"] != "succeeded" {
-		t.Fatalf("expected status succeeded, got %v", reported["status"])
+	if fake.reported == nil {
+		t.Fatal("expected ReportResult to be called")
 	}
-	if reported["id"] != "job-1" {
-		t.Fatalf("expected id job-1, got %v", reported["id"])
+	if fake.reported.Id != "job-1" {
+		t.Fatalf("expected reported id job-1, got %q", fake.reported.Id)
+	}
+	if fake.reported.Status != "succeeded" {
+		t.Fatalf("expected status succeeded, got %v", fake.reported.Status)
 	}
 }
 
 func TestLoop_RunOnce_NonZeroExitReportsFailed(t *testing.T) {
-	var reported map[string]any
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /internal/worker/poll", func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"job": map[string]any{"id": "job-2", "image": "alpine", "command": []string{"false"}, "timeout_seconds": 10},
-		}); err != nil {
-			t.Errorf("failed to encode response: %v", err)
-		}
-	})
-	mux.HandleFunc("POST /internal/worker/result", func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&reported); err != nil {
-			t.Errorf("invalid JSON body: %v", err)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	l := worker.NewLoop(srv.URL)
+	fake := &fakeJobServer{pollResp: &jobv1.PollJobResponse{
+		HasJob: true,
+		Job:    &jobv1.Job{Id: "job-2", Image: "alpine", Command: []string{"false"}, TimeoutSeconds: 10},
+	}}
+	l := newTestLoop(t, fake)
 	l.Execute = func(ctx context.Context, image string, command []string, timeoutSeconds int) (worker.ExecResult, error) {
 		return worker.ExecResult{ExitCode: 1}, nil
 	}
@@ -95,7 +100,7 @@ func TestLoop_RunOnce_NonZeroExitReportsFailed(t *testing.T) {
 	if err := l.RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce returned error: %v", err)
 	}
-	if reported["status"] != "failed" {
-		t.Fatalf("expected status failed, got %v", reported["status"])
+	if fake.reported.Status != "failed" {
+		t.Fatalf("expected status failed, got %v", fake.reported.Status)
 	}
 }

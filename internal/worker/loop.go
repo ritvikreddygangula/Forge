@@ -1,112 +1,72 @@
 package worker
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
+	"net"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	jobv1 "github.com/ritvikreddygangula/forge/api/proto/gen/jobv1"
 	"github.com/ritvikreddygangula/forge/internal/job"
 )
 
 type Loop struct {
-	CoordinatorURL string
-	HTTPClient     *http.Client
-	PollInterval   time.Duration
-	Execute        func(ctx context.Context, image string, command []string, timeoutSeconds int) (ExecResult, error)
+	client       jobv1.JobServiceClient
+	conn         *grpc.ClientConn
+	PollInterval time.Duration
+	Execute      func(ctx context.Context, image string, command []string, timeoutSeconds int) (ExecResult, error)
 }
 
-func NewLoop(coordinatorURL string) *Loop {
+// NewLoop dials the coordinator's gRPC address (e.g. "localhost:9090").
+func NewLoop(coordinatorGRPCAddr string) (*Loop, error) {
+	conn, err := grpc.NewClient(coordinatorGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial coordinator: %w", err)
+	}
+	return newLoop(conn), nil
+}
+
+// NewLoopWithDialer is the test seam — lets tests point the gRPC client at an
+// in-memory bufconn listener instead of a real network address.
+func NewLoopWithDialer(dialer func(context.Context, string) (net.Conn, error)) (*Loop, error) {
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(dialer),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial test coordinator: %w", err)
+	}
+	return newLoop(conn), nil
+}
+
+func newLoop(conn *grpc.ClientConn) *Loop {
 	return &Loop{
-		CoordinatorURL: coordinatorURL,
-		HTTPClient:     &http.Client{Timeout: 10 * time.Second},
-		PollInterval:   2 * time.Second,
-		Execute:        RunJob,
+		client:       jobv1.NewJobServiceClient(conn),
+		conn:         conn,
+		PollInterval: 2 * time.Second,
+		Execute:      RunJob,
 	}
 }
 
-type polledJob struct {
-	ID             string   `json:"id"`
-	Image          string   `json:"image"`
-	Command        []string `json:"command"`
-	TimeoutSeconds int      `json:"timeout_seconds"`
-}
-
-type pollResponse struct {
-	Job *polledJob `json:"job"`
-}
-
-func (l *Loop) pollOnce(ctx context.Context) (*polledJob, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.CoordinatorURL+"/internal/worker/poll", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := l.HTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var pr pollResponse
-	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
-		return nil, err
-	}
-	return pr.Job, nil
-}
-
-type reportResultRequest struct {
-	ID       string `json:"id"`
-	Status   string `json:"status"`
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	ExitCode int    `json:"exit_code"`
-}
-
-func (l *Loop) reportResult(ctx context.Context, id, status string, result ExecResult) error {
-	payload, err := json.Marshal(reportResultRequest{
-		ID:       id,
-		Status:   status,
-		Stdout:   result.Stdout,
-		Stderr:   result.Stderr,
-		ExitCode: result.ExitCode,
-	})
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.CoordinatorURL+"/internal/worker/result", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := l.HTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("unexpected status reporting result: %d", resp.StatusCode)
-	}
-	return nil
-}
+func (l *Loop) Close() error { return l.conn.Close() }
 
 func (l *Loop) RunOnce(ctx context.Context) error {
-	j, err := l.pollOnce(ctx)
+	resp, err := l.client.PollJob(ctx, &jobv1.PollJobRequest{})
 	if err != nil {
 		return fmt.Errorf("poll failed: %w", err)
 	}
-	if j == nil {
+	if !resp.HasJob {
 		return nil
 	}
+	j := resp.Job
 
-	slog.Info("job claimed", "id", j.ID, "image", j.Image)
+	slog.Info("job claimed", "id", j.Id, "image", j.Image)
 
-	result, execErr := l.Execute(ctx, j.Image, j.Command, j.TimeoutSeconds)
+	result, execErr := l.Execute(ctx, j.Image, j.Command, int(j.TimeoutSeconds))
 	status := string(job.StatusSucceeded)
 	if execErr != nil || result.ExitCode != 0 {
 		status = string(job.StatusFailed)
@@ -115,10 +75,17 @@ func (l *Loop) RunOnce(ctx context.Context) error {
 		result.Stderr = result.Stderr + "\n" + execErr.Error()
 	}
 
-	if err := l.reportResult(ctx, j.ID, status, result); err != nil {
+	_, err = l.client.ReportResult(ctx, &jobv1.ReportResultRequest{
+		Id:       j.Id,
+		Status:   status,
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
+		ExitCode: int32(result.ExitCode),
+	})
+	if err != nil {
 		return fmt.Errorf("report failed: %w", err)
 	}
-	slog.Info("job reported", "id", j.ID, "status", status)
+	slog.Info("job reported", "id", j.Id, "status", status)
 	return nil
 }
 
