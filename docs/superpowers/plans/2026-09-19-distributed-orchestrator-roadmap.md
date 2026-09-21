@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> This is the **master roadmap** — it sequences all 9 Parts, locks in the tech stack, and defines the commit sequence per Part. Per the writing-plans scope check, each Part is a separate subsystem with its own working, testable deliverable, so **each Part gets its own detailed bite-sized plan** written just before that Part starts (requirements for Part N+1 sharpen once Part N is actually built). The detailed plan for Part 0 + Part 1 already exists: `docs/superpowers/plans/2026-09-19-distributed-orchestrator-part0-1.md`.
+> This is the **master roadmap** — it sequences all 9 Parts, locks in the tech stack, and defines the commit sequence per Part, grouped into **6 feature branches** merged to `main` one at a time (see "Branch structure" below). Per the writing-plans scope check, each Part is a separate subsystem with its own working, testable deliverable, so **each Part gets its own detailed bite-sized plan** written just before that Part starts (requirements for Part N+1 sharpen once Part N is actually built) — a branch that bundles multiple Parts (Branch 6) still gets one detailed plan per Part inside it, not one merged plan. The detailed plan for Part 0 + Part 1 already exists: `docs/superpowers/plans/2026-09-19-distributed-orchestrator-part0-1.md`.
 
 **Goal:** Build a crash-safe, distributed job orchestrator (REST + MCP, gRPC internals, Kafka-backed event log, Raft leader election) as a portfolio/learning project, following the spec's strict one-new-concept-at-a-time learning sequence.
 
@@ -13,12 +13,30 @@
 ## Global Constraints
 
 - **Git workflow:** Claude never runs git commands. Output one short imperative-mood commit message per sub-step, and a PR title/description when a Part completes. Ritvik performs all git operations (`git add`, `git commit`, `git push`, PR creation).
-- **Branching:** Part 0 → straight to `main`. Every other Part → its own branch `part-N-short-description` cut from latest `main`, merged via PR when the Part's deliverable works end-to-end.
+- **Branching:** Part 0 → straight to `main`. Parts 1-5 each get their own branch `part-N-short-description` cut from latest `main`, merged via PR when that Part's deliverable works end-to-end. Parts 6, 8, and 9 are grouped onto one final branch/PR (`part-6-interfaces-observability`) — see "Branch structure" below for why. Total: 6 branches after Part 0, merged to `main` one at a time, sequentially — never two open at once.
 - **Sequencing discipline:** Do not skip ahead. Each Part must be fully working before the next starts — this is the spec's core teaching mechanism (never debug more than one new concept at once).
 - **PROGRESS.md:** Update at the end of every session, even short ones, at the repo root.
 - **Resume discipline:** Don't add partial/unfinished bullets to the resume. This project replaces "Deep Research Multi-Agent Systems" only once fully done (Part 6, or Part 9 if the stretch goal is pursued).
+- **Resume honesty (decided 2026-09-20):** This project uses `hashicorp/raft` — a library — not a from-scratch Raft implementation. Resume/interview language must say "implemented leader election and log replication across N coordinators using Raft consensus (hashicorp/raft)" or equivalent, never "implemented Raft from scratch." Any quantitative claim (throughput, failover latency, failure-recovery rate, worker count) must come from an actual benchmark/chaos-test run recorded in PROGRESS.md or a results doc — never written into the resume before it's been measured.
 - **Don't drift toward "another AI pipeline."** This project's whole resume value is being a systems project (concurrency, fault tolerance, Go) that contrasts with the Filing Agent (agentic AI, MCP, evals). Keep the MCP server thin — a delegation interface, not the point of the project.
 - **Part 7 (cloud/Terraform/k3s) is on hold.** Do not provision AWS resources or write Terraform against a real account until that decision is explicitly revisited after Part 6.
+
+---
+
+## Branch structure — 6 feature branches, merged to `main` one at a time
+
+The remaining work (everything after Part 0, which lands straight on `main`) is delivered as 6 feature branches instead of one-per-Part, each merged to `main` sequentially before the next starts. Each branch still internally follows the spec's numbered Parts and their detailed bite-sized plans — the "never debug more than one new concept at once" sequencing is unchanged; only the branch/PR boundary moves.
+
+| Branch | Git branch name | Covers | Why grouped this way |
+|---|---|---|---|
+| 1 | `part-1-http-skeleton` | Part 1 | Done — merging to `main` now. |
+| 2 | `part-2-grpc` | Part 2 | Standalone — a new transport (gRPC) is a big enough single concept on its own. |
+| 3 | `part-3-event-log` | Part 3 | Standalone — durable event log + crash-recovery-by-replay is a big single concept. |
+| 4 | `part-4-raft` | Part 4 | Standalone — Raft leader election is the hardest, most novel concept in the project; worth isolating more than any other Part. |
+| 5 | `part-5-scheduling` | Part 5 | Standalone — multi-worker load balancing + heartbeat failure detection is a distinct fault-tolerance concept from Raft (worker fleet vs. coordinator replicas), not safe to conflate with Branch 4. |
+| 6 | `part-6-interfaces-observability` | Parts 6 + 8 + 9 | Combined — these three are lower-risk, additive "polish the now-complete core" work (thin interface layers, instrumentation, an optional stretch demo) rather than new distributed-systems algorithms, so bundling them doesn't violate the one-concept-at-a-time rule. Landing this branch is also the point the system is "done" for resume purposes. |
+
+Part 7 (Terraform + k3s) stays outside this 6-branch structure and on hold, per the deployment-decision-deferred posture — not revisited until after Branch 6.
 
 ---
 
@@ -116,52 +134,60 @@ Each Part below lists: goal, deliverable (what "done" looks like end-to-end), an
 5. `refactor(job): back the job store with the replay-rebuilt state`
 6. `docs: update PROGRESS.md for Part 3`
 
-### Part 4 — Second coordinator + Raft leader election → branch `part-4-raft`
-**Deliverable:** Two coordinator replicas; killing the leader triggers automatic re-election within the sub-500ms target and in-flight jobs keep progressing.
+### Part 4 — Three-coordinator Raft cluster → branch `part-4-raft`
+**Deliverable:** **Three** coordinator replicas (not two — a 2-node Raft cluster has no real quorum advantage over 1, since both nodes must be up for quorum; 3 is the minimum topology that tolerates a real failure). Killing the leader triggers automatic re-election within the sub-500ms target and in-flight jobs keep progressing. Validated by both process-kill and simulated network-partition fault injection, with a benchmark harness recording actual failover latency across many trials — this is what makes the eventual resume numbers (median failover time, N injected failures, recovery rate) honest rather than invented.
 1. `feat(coordinator): embed hashicorp/raft with single-node bootstrap`
-2. `feat(coordinator): add second replica config and TCP raft transport`
+2. `feat(coordinator): add three-replica config and TCP raft transport`
 3. `feat(coordinator): gate job-assignment writes behind leader check, forward writes to leader`
 4. `test: add leader-election failover test (kill leader, assert re-election and continuity)`
 5. `feat(coordinator): persist raft log/snapshot to a volume`
-6. `docs: update PROGRESS.md for Part 4`
+6. `test: add network-partition fault injection (isolate leader from followers via a blockable transport or iptables/tc, assert the majority partition elects a new leader and the minority side does not)`
+7. `test: add failover benchmark harness — run N repeated leader-kill trials (process-kill and partition), record failover latency per trial, report median/p99`
+8. `docs: update PROGRESS.md for Part 4 with real benchmark results (failover latency distribution, trial count, pass rate)`
 
 ### Part 5 — Multiple workers + real scheduling → branch `part-5-scheduling`
-**Deliverable:** Several workers running concurrently; jobs go to the least-loaded worker; a killed worker's in-flight jobs get reassigned automatically via heartbeat-timeout detection.
+**Deliverable:** Several workers running concurrently; jobs go to the least-loaded worker; a killed worker's in-flight jobs get reassigned automatically via heartbeat-timeout detection. Includes a load-test scaling workers up to a real target count (e.g. 25) and measuring actual sustained throughput — again, so any resume throughput number is a measured result, not an aspiration.
 1. `feat(coordinator): track worker load via heartbeats`
 2. `feat(coordinator): add least-loaded worker assignment strategy`
 3. `feat(coordinator): add heartbeat-timeout failure detection`
 4. `feat(coordinator): reassign in-flight jobs from dead workers`
 5. `test: add multi-worker scheduling and failure-reassignment test`
-6. `docs: update PROGRESS.md for Part 5`
+6. `test: add load-test harness — scale to N workers via docker-compose/k3s replicas, submit a large batch of real container jobs (e.g. alpine + sleep) through the existing job schema, measure sustained jobs/sec and p50/p99 job latency` — **decided 2026-09-20: benchmark goes through real `docker run` execution end to end, no non-container/no-op job type added for the sake of a bigger number. Whatever throughput this measures is the throughput that goes on the resume.**
+7. `docs: update PROGRESS.md for Part 5 with real load-test results (worker count, sustained throughput, latency)`
 
-### Part 6 — MCP server + REST API polish → branch `part-6-mcp-rest`
+### Branch 6 — Parts 6 + 8 + 9, combined → branch `part-6-interfaces-observability`
+
+Three formerly-separate Parts, landed as one branch/PR per the "Branch structure" section above. Internally still sequenced as three sub-phases (finish Part 6 fully before starting Part 8, etc.) — only the branch/PR boundary is shared.
+
+#### Part 6 — MCP server + REST API polish
 **Deliverable:** Full REST surface (`POST /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/logs` streaming, `DELETE /jobs/{id}`) and an MCP server exposing the same four actions, both as thin layers over the now-complete core engine. README documents `docker compose up` end to end. **This is the point where the system is "done" for resume purposes if Part 9 isn't pursued.**
 1. `feat(api): finalize REST surface including log streaming and cancel`
 2. `feat(mcp): add MCP server exposing submit_job, get_job_status, stream_logs, cancel_job`
 3. `test: add MCP tool-call integration test`
 4. `docs: write full README local run instructions (docker compose up)`
-5. `docs: update PROGRESS.md for Part 6 — mark local system feature-complete`
+5. `docs: update PROGRESS.md for Part 6`
 
-### Part 7 — Terraform + self-managed k3s on EC2 (ON HOLD)
-Not planned in detail until the cloud-deployment decision is explicitly revisited after Part 6. No commits until then.
-
-### Part 8 — Observability → branch `part-8-observability`
+#### Part 8 — Observability
 **Deliverable:** Prometheus scrapes coordinator/worker metrics, Grafana dashboard shows job throughput/latency/failure rate, logs are structured JSON to stdout.
 1. `feat(coordinator,worker): expose Prometheus metrics endpoints`
 2. `chore: add Prometheus and Grafana to docker-compose`
 3. `refactor: switch logging to structured JSON via log/slog`
 4. `docs: add Grafana dashboard notes, update PROGRESS.md for Part 8`
 
-### Part 9 — CI job type dogfooding (stretch) → branch `part-9-ci-dogfooding`
+#### Part 9 — CI job type dogfooding (stretch)
 **Deliverable:** This system runs as real CI for the Filing Agent repo — clone, run test suite, report pass/fail + logs.
 1. `feat(job): add CI-style job type (clone repo, run test command, capture pass/fail)`
 2. `chore: point Filing Agent repo's CI at this orchestrator`
-3. `docs: write up the cross-project CI story for README/resume`
+3. `docs: write up the cross-project CI story for README/resume — mark Branch 6 (Parts 6+8+9) feature-complete`
+
+### Part 7 — Terraform + self-managed k3s on EC2 (ON HOLD)
+Not planned in detail until the cloud-deployment decision is explicitly revisited after Branch 6. No commits until then. Stays outside the 6-branch structure.
 
 ---
 
 ## Self-review
 
 - **Spec coverage:** Every architecture element (coordinator, worker, gRPC, Kafka/Redpanda, raft, Postgres, Docker, REST, MCP, deployment posture, learning sequence, git workflow) maps to a Part above; Part 7 is intentionally deferred per spec. Job types: CI-style lands in Part 9, code-execution lands as the Part 1 demo job body (arbitrary image+command *is* a code-execution job — no separate Part needed, matches spec's "recommended demo pair" once Part 9 adds the CI type).
+- **Branch-count check:** 6 branches after Part 0 (`part-1-http-skeleton`, `part-2-grpc`, `part-3-event-log`, `part-4-raft`, `part-5-scheduling`, `part-6-interfaces-observability`), matching the requested max of 6 — verified by listing every branch name referenced above and confirming none duplicate and none of Parts 1-6/8/9 are missing a branch. Part 7 correctly excluded (on hold, not part of the count).
 - **Placeholder scan:** No part above is implemented in this file beyond commit-message sequencing — that's intentional (see scope-check note); the actual step-by-step TDD content lives in the per-Part detailed plans, starting with Part 0-1.
 - **Type/interface consistency:** Deferred to the detailed per-Part plans, where real signatures get fixed. This roadmap only fixes the repo layout package boundaries (`internal/job`, `internal/eventlog`, etc.), which later plans must honor.
