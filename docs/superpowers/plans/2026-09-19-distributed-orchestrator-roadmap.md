@@ -152,7 +152,7 @@ Each Part below lists: goal, deliverable (what "done" looks like end-to-end), an
 3. `feat(coordinator): add heartbeat-timeout failure detection`
 4. `feat(coordinator): reassign in-flight jobs from dead workers`
 5. `test: add multi-worker scheduling and failure-reassignment test`
-6. `test: add load-test harness — scale to N workers via docker-compose/k3s replicas, submit a large synthetic job batch, measure sustained jobs/sec and p50/p99 job latency`
+6. `test: add load-test harness — scale to N workers via docker-compose/k3s replicas, submit a large batch of real container jobs (e.g. alpine + sleep) through the existing job schema, measure sustained jobs/sec and p50/p99 job latency` — **decided 2026-09-20: benchmark goes through real `docker run` execution end to end, no non-container/no-op job type added for the sake of a bigger number. Whatever throughput this measures is the throughput that goes on the resume.**
 7. `docs: update PROGRESS.md for Part 5 with real load-test results (worker count, sustained throughput, latency)`
 
 ### Branch 6 — Parts 6 + 8 + 9, combined → branch `part-6-interfaces-observability`
