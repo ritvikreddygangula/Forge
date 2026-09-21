@@ -56,3 +56,29 @@ func (s *GRPCServer) ReportResult(ctx context.Context, req *jobv1.ReportResultRe
 	}
 	return &jobv1.ReportResultResponse{}, nil
 }
+
+// StreamLogs sends whatever stdout/stderr the store currently holds for a job
+// as one or two chunks, then closes the stream. The executor still captures
+// output as complete buffers after the job finishes (Part 1 behavior,
+// unchanged), so this is REST /jobs/{id}/logs parity, not live tailing —
+// there's no incremental capture yet to stream from.
+func (s *GRPCServer) StreamLogs(req *jobv1.StreamLogsRequest, stream jobv1.JobService_StreamLogsServer) error {
+	j, err := s.store.Get(req.Id)
+	if err != nil {
+		if errors.Is(err, job.ErrNotFound) {
+			return status.Error(codes.NotFound, "job not found")
+		}
+		return status.Error(codes.Internal, "failed to get job")
+	}
+	if j.Stdout != "" {
+		if err := stream.Send(&jobv1.LogChunk{Stream: "stdout", Data: j.Stdout}); err != nil {
+			return err
+		}
+	}
+	if j.Stderr != "" {
+		if err := stream.Send(&jobv1.LogChunk{Stream: "stderr", Data: j.Stderr}); err != nil {
+			return err
+		}
+	}
+	return nil
+}

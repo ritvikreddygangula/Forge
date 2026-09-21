@@ -104,3 +104,42 @@ func TestGRPC_ReportResult_NotFound(t *testing.T) {
 		t.Fatal("expected an error for an unknown job id, got nil")
 	}
 }
+
+func TestGRPC_StreamLogs(t *testing.T) {
+	store := job.NewMemoryStore()
+	created, _ := store.Create("alpine", []string{"true"}, 10)
+	store.ClaimNext()
+	if err := store.Complete(created.ID, job.StatusSucceeded, "hello\n", "", 0); err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+	client := dialGRPCServer(t, store)
+
+	stream, err := client.StreamLogs(context.Background(), &jobv1.StreamLogsRequest{Id: created.ID})
+	if err != nil {
+		t.Fatalf("StreamLogs returned error: %v", err)
+	}
+
+	var chunks []*jobv1.LogChunk
+	for {
+		chunk, err := stream.Recv()
+		if err != nil {
+			break // io.EOF ends the stream; any other error fails via the chunk assertion below
+		}
+		chunks = append(chunks, chunk)
+	}
+	if len(chunks) != 1 || chunks[0].Data != "hello\n" || chunks[0].Stream != "stdout" {
+		t.Fatalf("expected one stdout chunk %q, got %+v", "hello\n", chunks)
+	}
+}
+
+func TestGRPC_StreamLogs_NotFound(t *testing.T) {
+	client := dialGRPCServer(t, job.NewMemoryStore())
+
+	stream, err := client.StreamLogs(context.Background(), &jobv1.StreamLogsRequest{Id: "does-not-exist"})
+	if err != nil {
+		t.Fatalf("StreamLogs returned error: %v", err)
+	}
+	if _, err := stream.Recv(); err == nil {
+		t.Fatal("expected an error receiving from the stream for an unknown job id, got nil")
+	}
+}
