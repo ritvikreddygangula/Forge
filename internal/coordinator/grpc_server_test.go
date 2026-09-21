@@ -65,7 +65,9 @@ func TestGRPC_PollJob_ClaimsQueuedJob(t *testing.T) {
 func TestGRPC_ReportResult_Success(t *testing.T) {
 	store := job.NewMemoryStore()
 	created, _ := store.Create("alpine", []string{"true"}, 10)
-	store.ClaimNext()
+	if _, err := store.ClaimNext(); err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
 	client := dialGRPCServer(t, store)
 
 	_, err := client.ReportResult(context.Background(), &jobv1.ReportResultRequest{
@@ -108,7 +110,9 @@ func TestGRPC_ReportResult_NotFound(t *testing.T) {
 func TestGRPC_StreamLogs(t *testing.T) {
 	store := job.NewMemoryStore()
 	created, _ := store.Create("alpine", []string{"true"}, 10)
-	store.ClaimNext()
+	if _, err := store.ClaimNext(); err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
 	if err := store.Complete(created.ID, job.StatusSucceeded, "hello\n", "", 0); err != nil {
 		t.Fatalf("Complete returned error: %v", err)
 	}
