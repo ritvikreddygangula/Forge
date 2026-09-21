@@ -1,7 +1,10 @@
-.PHONY: build test test-integration lint run-coordinator run-worker
+.PHONY: build test test-integration lint run-coordinator run-worker proto
 
 build:
 	go build ./...
+
+proto:
+	buf generate
 
 test:
 	go test -race ./...

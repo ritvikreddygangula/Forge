@@ -16,23 +16,28 @@ colima start
 
 ### Step 1: Start the coordinator
 
-In one terminal, start the coordinator on port 8080:
+In one terminal, start the coordinator. It listens on two ports: REST on `:8080` (for submitting jobs
+and checking status) and gRPC on `:9090` (for the worker):
 
 ```bash
 make run-coordinator
 ```
 
-You should see output like: `... INFO coordinator starting addr=:8080`
+You should see output like:
+```
+INFO coordinator gRPC starting addr=:9090
+INFO coordinator HTTP starting addr=:8080
+```
 
 ### Step 2: Start the worker
 
-In another terminal, start the worker pointing to the coordinator:
+In another terminal, start the worker pointing to the coordinator's gRPC port:
 
 ```bash
 make run-worker
 ```
 
-The worker will begin polling the coordinator for jobs.
+The worker will begin polling the coordinator for jobs over gRPC.
 
 ### Step 3: Submit and track a job
 
@@ -54,5 +59,16 @@ Note: the first run will also pull the `alpine:3.19` image, which can take longe
 
 ### Environment variables
 
-- `COORDINATOR_ADDR` — the coordinator's listen address (default `:8080`).
-- `COORDINATOR_URL` — the coordinator URL the worker polls and reports to (default `http://localhost:8080`).
+- `COORDINATOR_ADDR` — the coordinator's REST listen address (default `:8080`).
+- `COORDINATOR_GRPC_ADDR` — the coordinator's gRPC listen address (default `:9090`); on the worker side,
+  the same variable is the address it dials (default `localhost:9090`).
+
+### Regenerating gRPC code
+
+The worker-facing transport (`PollJob`, `ReportResult`, `StreamLogs`) is defined in
+`api/proto/jobv1/job.proto` and generated into `api/proto/gen/jobv1/`. Generated code is committed, so
+this is only needed when the `.proto` file changes:
+
+```bash
+make proto   # requires buf and the protoc-gen-go / protoc-gen-go-grpc plugins on PATH
+```

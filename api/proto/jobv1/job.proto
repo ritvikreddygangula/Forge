@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package forge.job.v1;
+
+option go_package = "github.com/ritvikreddygangula/forge/api/proto/gen/jobv1;jobv1";
+
+// JobService is the worker-facing transport: poll for work, report results,
+// fetch logs. It mirrors the internal HTTP endpoints it replaces
+// (GET /internal/worker/poll, POST /internal/worker/result) and adds
+// StreamLogs for parity with the external GET /jobs/{id}/logs endpoint.
+service JobService {
+  rpc PollJob(PollJobRequest) returns (PollJobResponse);
+  rpc ReportResult(ReportResultRequest) returns (ReportResultResponse);
+  rpc StreamLogs(StreamLogsRequest) returns (stream LogChunk);
+}
+
+message PollJobRequest {}
+
+message PollJobResponse {
+  // Unset (nil) when the queue is empty — callers must check has_job.
+  bool has_job = 1;
+  Job job = 2;
+}
+
+message Job {
+  string id = 1;
+  string image = 2;
+  repeated string command = 3;
+  int32 timeout_seconds = 4;
+}
+
+message ReportResultRequest {
+  string id = 1;
+  string status = 2; // "succeeded" or "failed"
+  string stdout = 3;
+  string stderr = 4;
+  int32 exit_code = 5;
+}
+
+message ReportResultResponse {}
+
+message StreamLogsRequest {
+  string id = 1;
+}
+
+message LogChunk {
+  string stream = 1; // "stdout" or "stderr"
+  string data = 2;
+}
