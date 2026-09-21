@@ -2,7 +2,7 @@
 
 A distributed job orchestrator (mini GitHub Actions / mini Kubernetes Jobs) built from scratch in Go, with real fault tolerance: crash-safe coordinator, Raft leader election, and a durable Kafka/Redpanda event log.
 
-See [distributed-orchestrator-spec.md](./distributed-orchestrator-spec.md) for the full project spec, architecture, and build sequence.
+See [PLAN.md](./PLAN.md) for a readable overview of what's built and what's next, and [docs/spec.md](./docs/spec.md) for the full project spec, architecture, and build sequence.
 
 ## Running locally
 

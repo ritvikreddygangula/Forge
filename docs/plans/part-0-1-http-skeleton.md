@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.23+, stdlib `net/http` (Go 1.22+ pattern routing), `github.com/google/uuid`, `log/slog`, stdlib `testing`, `golangci-lint`, GitHub Actions. See the roadmap doc for full-project stack rationale.
 
-**Spec:** `distributed-orchestrator-spec.md` (repo root). **Roadmap:** `docs/superpowers/plans/2026-09-19-distributed-orchestrator-roadmap.md`.
+**Spec:** `docs/spec.md`. **Roadmap:** `docs/plans/roadmap.md`.
 
 ## Global Constraints
 

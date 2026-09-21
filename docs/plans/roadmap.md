@@ -2,24 +2,25 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> This is the **master roadmap** — it sequences all 9 Parts, locks in the tech stack, and defines the commit sequence per Part, grouped into **6 feature branches** merged to `main` one at a time (see "Branch structure" below). Per the writing-plans scope check, each Part is a separate subsystem with its own working, testable deliverable, so **each Part gets its own detailed bite-sized plan** written just before that Part starts (requirements for Part N+1 sharpen once Part N is actually built) — a branch that bundles multiple Parts (Branch 6) still gets one detailed plan per Part inside it, not one merged plan. The detailed plan for Part 0 + Part 1 already exists: `docs/superpowers/plans/2026-09-19-distributed-orchestrator-part0-1.md`.
+> This is the **master roadmap** — it sequences all 9 Parts, locks in the tech stack, and defines the commit sequence per Part, grouped into **6 feature branches** merged to `main` one at a time (see "Branch structure" below). Per the writing-plans scope check, each Part is a separate subsystem with its own working, testable deliverable, so **each Part gets its own detailed bite-sized plan** written just before that Part starts (requirements for Part N+1 sharpen once Part N is actually built) — a branch that bundles multiple Parts (Branch 6) still gets one detailed plan per Part inside it, not one merged plan. The detailed plan for Part 0 + Part 1 already exists: `docs/plans/part-0-1-http-skeleton.md`.
 
-**Goal:** Build a crash-safe, distributed job orchestrator (REST + MCP, gRPC internals, Kafka-backed event log, Raft leader election) as a portfolio/learning project, following the spec's strict one-new-concept-at-a-time learning sequence.
+**Goal:** Build a crash-safe, distributed job orchestrator (REST + thin optional MCP, gRPC internals, Kafka-backed event log, Raft leader election) as a portfolio/learning project, following the spec's strict one-new-concept-at-a-time learning sequence.
 
-**Architecture:** Go coordinator + Go worker agents, gRPC between them, Kafka/Redpanda as the durable event log the coordinator replays to rebuild state, hashicorp/raft embedded in the coordinator binary for leader election across replicas, Postgres for queryable job/worker metadata, Docker (via Colima locally) as the job sandbox, REST + MCP as the two external interfaces over the same core engine.
+**Architecture:** Go coordinator + Go worker agents, gRPC between them, Kafka/Redpanda as the durable event log the coordinator replays to rebuild state, hashicorp/raft embedded in the coordinator binary for leader election across replicas, Postgres for queryable job/worker metadata, Docker (via Colima locally) as the job sandbox, REST as the primary external interface over the core engine (MCP is a secondary, thin add-on — see Global Constraints).
 
-**Spec:** `distributed-orchestrator-spec.md` (repo root) — this plan argues from that spec; read both.
+**Spec:** `docs/spec.md` — this plan argues from that spec; read both.
 
 ## Global Constraints
 
 - **Git workflow:** Claude never runs git commands. Output one short imperative-mood commit message per sub-step, and a PR title/description when a Part completes. Ritvik performs all git operations (`git add`, `git commit`, `git push`, PR creation).
 - **Branching:** Part 0 → straight to `main`. Parts 1-5 each get their own branch `part-N-short-description` cut from latest `main`, merged via PR when that Part's deliverable works end-to-end. Parts 6, 8, and 9 are grouped onto one final branch/PR (`part-6-interfaces-observability`) — see "Branch structure" below for why. Total: 6 branches after Part 0, merged to `main` one at a time, sequentially — never two open at once.
 - **Sequencing discipline:** Do not skip ahead. Each Part must be fully working before the next starts — this is the spec's core teaching mechanism (never debug more than one new concept at once).
-- **PROGRESS.md:** Update at the end of every session, even short ones, at the repo root.
-- **Resume discipline:** Don't add partial/unfinished bullets to the resume. This project replaces "Deep Research Multi-Agent Systems" only once fully done (Part 6, or Part 9 if the stretch goal is pursued).
+- **PROGRESS.md:** Update at the end of every branch (and any long session), at the repo root — one section per branch, one line per commit.
+- **Manual/off-repo steps get flagged inline, always.** Any step that needs something outside the code — installing Docker/Colima, starting a daemon, creating a cloud account, provisioning infrastructure, obtaining an API key — is called out explicitly at the point it's needed (marked "⚠️ Manual step"), never silently assumed. See `CLAUDE.md` and `PLAN.md` for the standing convention.
+- **Resume discipline:** Don't add partial/unfinished bullets to the resume. This project replaces "Deep Research Multi-Agent Systems" only once the core engine (Parts 1-5) plus observability (Part 8) is done.
 - **Resume honesty (decided 2026-09-20):** This project uses `hashicorp/raft` — a library — not a from-scratch Raft implementation. Resume/interview language must say "implemented leader election and log replication across N coordinators using Raft consensus (hashicorp/raft)" or equivalent, never "implemented Raft from scratch." Any quantitative claim (throughput, failover latency, failure-recovery rate, worker count) must come from an actual benchmark/chaos-test run recorded in PROGRESS.md or a results doc — never written into the resume before it's been measured.
-- **Don't drift toward "another AI pipeline."** This project's whole resume value is being a systems project (concurrency, fault tolerance, Go) that contrasts with the Filing Agent (agentic AI, MCP, evals). Keep the MCP server thin — a delegation interface, not the point of the project.
-- **Part 7 (cloud/Terraform/k3s) is on hold.** Do not provision AWS resources or write Terraform against a real account until that decision is explicitly revisited after Part 6.
+- **MCP is not the point (clarified 2026-09-21).** It stays as a thin, optional Part 6 add-on — already covered by DeltaLedger, so it's not a headline resume line here and isn't worth real design effort. This project's resume value is being a systems project (concurrency, fault tolerance, Go) that contrasts with AI/agent work — don't drift toward "another AI pipeline," and don't let MCP scope-creep past "thin wrapper."
+- **Part 7 (cloud/Terraform/k3s) is on hold.** Do not provision AWS resources or write Terraform against a real account until that decision is explicitly revisited after Branch 6.
 
 ---
 
@@ -34,7 +35,9 @@ The remaining work (everything after Part 0, which lands straight on `main`) is 
 | 3 | `part-3-event-log` | Part 3 | Standalone — durable event log + crash-recovery-by-replay is a big single concept. |
 | 4 | `part-4-raft` | Part 4 | Standalone — Raft leader election is the hardest, most novel concept in the project; worth isolating more than any other Part. |
 | 5 | `part-5-scheduling` | Part 5 | Standalone — multi-worker load balancing + heartbeat failure detection is a distinct fault-tolerance concept from Raft (worker fleet vs. coordinator replicas), not safe to conflate with Branch 4. |
-| 6 | `part-6-interfaces-observability` | Parts 6 + 8 + 9 | Combined — these three are lower-risk, additive "polish the now-complete core" work (thin interface layers, instrumentation, an optional stretch demo) rather than new distributed-systems algorithms, so bundling them doesn't violate the one-concept-at-a-time rule. Landing this branch is also the point the system is "done" for resume purposes. |
+| 6 | `part-6-interfaces-observability` | Parts 6 + 8 + 9 | Combined — these three are lower-risk, additive "polish the now-complete core" work (thin interface layers, instrumentation, an optional stretch demo) rather than new distributed-systems algorithms, so bundling them doesn't violate the one-concept-at-a-time rule. |
+
+**Resume-done checkpoint:** the system is "done" for resume purposes once **Branch 5** lands — that's the full fault-tolerant core (HTTP → gRPC → durable event log → Raft leader election → multi-worker scheduling), which is the actual point of this project. Branch 6 (REST/MCP interface polish + observability) is worth doing and worth a resume line of its own ("instrumented with Prometheus/Grafana"), but nothing after Branch 5 gates whether this project counts as finished — including the MCP layer, which stays deliberately thin either way.
 
 Part 7 (Terraform + k3s) stays outside this 6-branch structure and on hold, per the deployment-decision-deferred posture — not revisited until after Branch 6.
 
@@ -53,7 +56,7 @@ The spec already locks in most of this; where it left something open (`Kafka (or
 | Metadata store | Postgres (`jackc/pgx/v5` driver) + `golang-migrate` for schema migrations | pgx is the modern idiomatic Postgres driver for Go (faster, better type support than `lib/pq`). golang-migrate keeps migrations as plain versioned `.sql` files — simple, no ORM magic to explain in an interview. |
 | Job sandbox | Docker via Colima locally; CLI (`os/exec` + `docker run`) in Part 1, optionally the Docker Engine SDK (`docker/docker/client`) later if you want the extra depth | Spec requirement. Starting with the CLI in Part 1 keeps Part 1 about the HTTP job lifecycle, not Docker SDK intricacies — consistent with the spec's "one new concept at a time" rule. Swapping to the SDK is a clean, optional Part-1.5 refactor once the lifecycle is solid. |
 | REST framework | Stdlib `net/http` with Go 1.22+'s pattern-based `ServeMux` (`"GET /jobs/{id}"`) | No router dependency needed for a handful of routes; gRPC (Part 2 onward) carries the real internal traffic anyway, so REST stays a thin, boring layer — deliberately, since over-engineering the REST layer isn't where the learning value is. |
-| MCP server | `github.com/modelcontextprotocol/go-sdk` (confirm latest state at Part 6 implementation time) | Official Go SDK for MCP; keeps the MCP layer a thin wrapper delegating into the same core engine as REST, per the spec's "same actions, exposed" framing. |
+| MCP server (secondary) | `github.com/modelcontextprotocol/go-sdk`, thin wrapper over the same core engine as REST | Not the point of the project (see Global Constraints) — kept small deliberately, no more design effort than the REST layer got. |
 | Structured logging | Stdlib `log/slog` | Zero extra dependency, JSON-structured output feeds directly into Part 8 observability without a rewrite. |
 | Metrics | `prometheus/client_golang` + Prometheus + Grafana (Part 8) | Spec requirement. |
 | Testing | Stdlib `testing` + `testify/assert`/`require` for readability; `testcontainers-go` for integration tests that spin up real Redpanda/Postgres/Docker | Keeps unit tests dependency-light; integration tests are honest (real infra, not mocks) which matters a lot for a fault-tolerance-focused project — a mocked Kafka would undercut the whole "crash-safe" story. |
@@ -75,17 +78,19 @@ forge/
     coordinator/         HTTP/gRPC handlers, scheduling, raft integration
     worker/               poll/execute/report loop, Docker executor
     eventlog/            Kafka/Redpanda producer + consumer, state-rebuild-on-replay logic (Part 3)
-    mcpserver/            MCP tool handlers (Part 6)
+    mcpserver/            MCP tool handlers (Part 6, thin/secondary)
   api/
     proto/                job.proto, generated gRPC/protobuf code (Part 2)
   deploy/
     docker-compose.yml    full local stack
     k3s/                   manifests (Part 7, on hold)
   docs/
-    superpowers/plans/    plan documents (this file and successors)
+    spec.md               the project spec
+    plans/                plan documents (this file and successors)
+  CLAUDE.md
+  PLAN.md
   PROGRESS.md
   README.md
-  distributed-orchestrator-spec.md
 ```
 
 ---
@@ -96,7 +101,7 @@ Each Part below lists: goal, deliverable (what "done" looks like end-to-end), an
 
 ### Part 0 — Repo scaffold → commits straight to `main`
 **Deliverable:** `go build ./...` and `go test ./...` succeed on an empty-but-structured repo; CI runs on every push.
-**Detailed plan:** `docs/superpowers/plans/2026-09-19-distributed-orchestrator-part0-1.md` (combined with Part 1)
+**Detailed plan:** `docs/plans/part-0-1-http-skeleton.md` (combined with Part 1)
 1. `chore: scaffold Go module and repo layout`
 2. `chore: add Makefile with build/test/lint targets`
 3. `ci: add GitHub Actions workflow for build, vet, lint, test`
@@ -104,7 +109,7 @@ Each Part below lists: goal, deliverable (what "done" looks like end-to-end), an
 
 ### Part 1 — Plain HTTP skeleton → branch `part-1-http-skeleton`
 **Deliverable:** Submit a job via `POST /jobs`, one worker polls over HTTP, runs it in a Docker container via Colima, reports result back; `GET /jobs/{id}` and `GET /jobs/{id}/logs` show the outcome.
-**Detailed plan:** `docs/superpowers/plans/2026-09-19-distributed-orchestrator-part0-1.md`
+**Detailed plan:** `docs/plans/part-0-1-http-skeleton.md`
 1. `feat(job): add in-memory job store with state transitions`
 2. `feat(coordinator): add POST /jobs and GET /jobs/{id} handlers`
 3. `feat(coordinator): add worker poll and result-reporting endpoints`
@@ -157,13 +162,13 @@ Each Part below lists: goal, deliverable (what "done" looks like end-to-end), an
 
 ### Branch 6 — Parts 6 + 8 + 9, combined → branch `part-6-interfaces-observability`
 
-Three formerly-separate Parts, landed as one branch/PR per the "Branch structure" section above. Internally still sequenced as three sub-phases (finish Part 6 fully before starting Part 8, etc.) — only the branch/PR boundary is shared.
+Three formerly-separate Parts, landed as one branch/PR per the "Branch structure" section above. Internally still sequenced as three sub-phases (finish Part 6 fully before starting Part 8, etc.) — only the branch/PR boundary is shared. MCP is included here but deliberately thin — see the "MCP is not the point" global constraint above.
 
-#### Part 6 — MCP server + REST API polish
-**Deliverable:** Full REST surface (`POST /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/logs` streaming, `DELETE /jobs/{id}`) and an MCP server exposing the same four actions, both as thin layers over the now-complete core engine. README documents `docker compose up` end to end. **This is the point where the system is "done" for resume purposes if Part 9 isn't pursued.**
+#### Part 6 — REST API polish + thin MCP layer
+**Deliverable:** Full REST surface (`POST /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/logs` streaming, `DELETE /jobs/{id}`) as the finished primary interface, plus a minimal MCP server exposing the same four actions as a thin wrapper over the same core engine. README documents `docker compose up` end to end.
 1. `feat(api): finalize REST surface including log streaming and cancel`
-2. `feat(mcp): add MCP server exposing submit_job, get_job_status, stream_logs, cancel_job`
-3. `test: add MCP tool-call integration test`
+2. `feat(mcp): add thin MCP server exposing submit_job, get_job_status, stream_logs, cancel_job`
+3. `test: add REST and MCP integration tests covering submit through cancel`
 4. `docs: write full README local run instructions (docker compose up)`
 5. `docs: update PROGRESS.md for Part 6`
 
@@ -187,7 +192,7 @@ Not planned in detail until the cloud-deployment decision is explicitly revisite
 
 ## Self-review
 
-- **Spec coverage:** Every architecture element (coordinator, worker, gRPC, Kafka/Redpanda, raft, Postgres, Docker, REST, MCP, deployment posture, learning sequence, git workflow) maps to a Part above; Part 7 is intentionally deferred per spec. Job types: CI-style lands in Part 9, code-execution lands as the Part 1 demo job body (arbitrary image+command *is* a code-execution job — no separate Part needed, matches spec's "recommended demo pair" once Part 9 adds the CI type).
+- **Spec coverage:** Every architecture element (coordinator, worker, gRPC, Kafka/Redpanda, raft, Postgres, Docker, REST, MCP, deployment posture, learning sequence, git workflow) maps to a Part above; Part 7 is intentionally deferred per spec, MCP is intentionally kept thin/secondary per the 2026-09-21 clarification (not cut, just not the point). Job types: CI-style lands in Part 9, code-execution lands as the Part 1 demo job body (arbitrary image+command *is* a code-execution job — no separate Part needed, matches spec's "recommended demo pair" once Part 9 adds the CI type).
 - **Branch-count check:** 6 branches after Part 0 (`part-1-http-skeleton`, `part-2-grpc`, `part-3-event-log`, `part-4-raft`, `part-5-scheduling`, `part-6-interfaces-observability`), matching the requested max of 6 — verified by listing every branch name referenced above and confirming none duplicate and none of Parts 1-6/8/9 are missing a branch. Part 7 correctly excluded (on hold, not part of the count).
 - **Placeholder scan:** No part above is implemented in this file beyond commit-message sequencing — that's intentional (see scope-check note); the actual step-by-step TDD content lives in the per-Part detailed plans, starting with Part 0-1.
 - **Type/interface consistency:** Deferred to the detailed per-Part plans, where real signatures get fixed. This roadmap only fixes the repo layout package boundaries (`internal/job`, `internal/eventlog`, etc.), which later plans must honor.

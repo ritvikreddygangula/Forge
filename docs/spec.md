@@ -1,7 +1,7 @@
 # Distributed Job Orchestrator — Project Spec
 
 ## One-line pitch
-A distributed job orchestrator — exposed via REST and MCP — that any service or AI agent can submit arbitrary containerized work to and get results back from. Think "mini GitHub Actions / mini Kubernetes Jobs," built from scratch, with real fault tolerance (crash-safe coordinator, leader election, durable event log).
+A distributed job orchestrator — exposed via REST, with a thin optional MCP layer — that any service or AI agent can submit arbitrary containerized work to and get results back from. Think "mini GitHub Actions / mini Kubernetes Jobs," built from scratch, with real fault tolerance (crash-safe coordinator, leader election, durable event log).
 
 ## Why this project exists (resume framing — don't lose this)
 This is the **second flagship project**, paired with the Filing Materiality & Diligence Agent. The two are deliberately different:
@@ -9,6 +9,8 @@ This is the **second flagship project**, paired with the Filing Materiality & Di
 - **Orchestrator** → distributed systems fundamentals, concurrency, fault tolerance, Go
 
 The goal is *range*, not depth-in-one-lane. Don't let this project drift toward "another AI pipeline" — its whole value on the resume is being a foundational systems project.
+
+**Clarified 2026-09-21: MCP stays, but it is not the point.** The point of this project is distributed-systems thinking — concurrency, fault tolerance, consensus, crash recovery (Parts 1-5). MCP (already covered by DeltaLedger) is fine to keep as a thin, optional Part 6 add-on over the finished core, same as it's always been — it just isn't what makes this project "done," isn't a headline resume line on its own, and isn't worth spending real design effort on. See the resume-done checkpoint under Learning sequence below: the project is complete at Part 5, with or without Part 6.
 
 Sequencing: build this **after** the Filing Agent ships and replaces Chatify on the resume. Once this project is done, it replaces Deep Research Multi-Agent Systems. Until then, do not add partial/unfinished bullets to the resume — see PROGRESS.md discipline below.
 
@@ -43,8 +45,8 @@ Recommended demo pair: **CI-runner + code-execution**, since together they're th
   - Docker is free/open-source regardless of where it runs; *where* it runs is decided by the deployment question below.
 
 ## Interfaces
-- **REST API**: `POST /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/logs` (stream), `DELETE /jobs/{id}`
-- **MCP server**: `submit_job`, `get_job_status`, `stream_logs`, `cancel_job` — same actions, exposed so an AI agent (including the Filing Agent, conceptually) can delegate heavy/long-running work to this system instead of blocking its own execution. This is the real connective tissue between your two projects — worth a line in the eventual resume summary.
+- **REST API**: `POST /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/logs` (stream), `DELETE /jobs/{id}` — the primary interface, and the one that matters for the resume story.
+- **MCP server** (secondary, thin): `submit_job`, `get_job_status`, `stream_logs`, `cancel_job` — same actions, exposed so an AI agent could delegate work to this system. Kept because it's cheap once REST exists, not because it's central — see the resume-framing note above.
 
 ## Deployment — cloud decision deferred, local-first for now
 - Default posture: build and run the entire system locally via Docker Compose (coordinator, worker(s), Kafka/Redpanda, Postgres). This covers Parts 1–6 in full — no cloud dependency needed to get the whole system working end-to-end.
@@ -66,7 +68,7 @@ This order exists specifically so you're never debugging more than one new conce
 3. **Part 3 — Kafka/Redpanda event log.** Job-state transitions become an append-only log. Coordinator can now crash and rebuild state by replaying.
 4. **Part 4 — Second coordinator + Raft leader election.** Handle coordinator crashes, not just worker crashes.
 5. **Part 5 — Multiple workers + real scheduling.** Least-loaded worker gets the job; heartbeat-based failure detection reassigns jobs from dead workers.
-6. **Part 6 — MCP server + REST API polish.** Both thin interfaces over the now-working core engine.
+6. **Part 6 — REST API polish + thin MCP layer.** Finalize the external interface (streaming logs, cancel) over the now-working core engine; MCP is a small optional add-on here, not the focus.
 7. **Part 7 — (on hold, decide after Part 6) Terraform + self-managed k3s on EC2.** Only pursued if the cloud deployment decision above is greenlit. Until then, the system's deployment story is: fully working locally via Docker Compose, documented in README.
 8. **Part 8 — Observability.** Prometheus + Grafana in-cluster; structured logging to stdout.
 9. **Part 9 (stretch) — CI job type dogfooding.** Point this system at the Filing Agent repo as its real CI backend.
