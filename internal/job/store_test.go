@@ -3,6 +3,7 @@ package job_test
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ritvikreddygangula/forge/internal/job"
 )
@@ -134,5 +135,59 @@ func TestMemoryStore_ClaimNext_ConcurrentClaimsAreUnique(t *testing.T) {
 	}
 	if len(seen) != n {
 		t.Fatalf("expected %d distinct jobs claimed, got %d", n, len(seen))
+	}
+}
+
+func TestMemoryStore_Rebuild(t *testing.T) {
+	s := job.NewMemoryStore()
+	now := time.Now()
+	s.Rebuild([]*job.Job{
+		{ID: "a", Image: "alpine", Command: []string{"true"}, Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now},
+		{ID: "b", Image: "alpine", Command: []string{"true"}, Status: job.StatusSucceeded, Stdout: "ok\n", CreatedAt: now, UpdatedAt: now},
+	})
+
+	got, err := s.Get("a")
+	if err != nil {
+		t.Fatalf("Get(a) returned error: %v", err)
+	}
+	if got.Status != job.StatusQueued {
+		t.Fatalf("expected job a status queued, got %s", got.Status)
+	}
+
+	got, err = s.Get("b")
+	if err != nil {
+		t.Fatalf("Get(b) returned error: %v", err)
+	}
+	if got.Status != job.StatusSucceeded || got.Stdout != "ok\n" {
+		t.Fatalf("expected job b succeeded with stdout ok, got %+v", got)
+	}
+
+	// Only the still-queued job should be claimable — b is already terminal.
+	claimed, err := s.ClaimNext()
+	if err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if claimed == nil || claimed.ID != "a" {
+		t.Fatalf("expected to claim job a, got %+v", claimed)
+	}
+}
+
+func TestMemoryStore_Rebuild_ClearsPriorState(t *testing.T) {
+	s := job.NewMemoryStore()
+	if _, err := s.Create("alpine", []string{"true"}, 10); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	s.Rebuild([]*job.Job{{ID: "only-this-one", Status: job.StatusQueued, CreatedAt: time.Now(), UpdatedAt: time.Now()}})
+
+	if _, err := s.Get("only-this-one"); err != nil {
+		t.Fatalf("expected rebuilt job to exist: %v", err)
+	}
+	claimed, err := s.ClaimNext()
+	if err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if claimed == nil || claimed.ID != "only-this-one" {
+		t.Fatalf("expected only the rebuilt job to be claimable, got %+v", claimed)
 	}
 }

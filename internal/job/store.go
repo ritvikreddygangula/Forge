@@ -76,6 +76,25 @@ func (s *MemoryStore) ClaimNext() (*Job, error) {
 	return nil, nil
 }
 
+// Rebuild replaces the store's contents with exactly the given jobs and
+// restores FIFO claim order for any job still StatusQueued. Used once, on
+// startup, to restore state from an event-log replay — never called during
+// normal request handling, so it isn't part of the Store interface.
+func (s *MemoryStore) Rebuild(jobs []*Job) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.jobs = make(map[string]*Job, len(jobs))
+	s.order = nil
+	for _, j := range jobs {
+		cp := *j
+		s.jobs[j.ID] = &cp
+		if j.Status == StatusQueued {
+			s.order = append(s.order, j.ID)
+		}
+	}
+}
+
 func (s *MemoryStore) Complete(id string, status Status, stdout, stderr string, exitCode int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
