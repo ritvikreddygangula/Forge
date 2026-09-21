@@ -12,7 +12,7 @@ few rules that must never silently slip.
 
 ## Where things stand right now
 - **Done and merged to `main`:** Part 0 (scaffold) + Part 1 (plain HTTP coordinator/worker, `part-1-http-skeleton`, PR #1). Verified end-to-end with a real Docker container via Colima.
-- **In progress:** nothing — Branch 2 (`part-2-grpc`) has not started. Next action is to write its detailed bite-sized plan (`docs/plans/part-2-grpc.md`), then start Task 2.1.
+- **In progress:** Branch 2 (`part-2-grpc`) — Tasks 2.1–2.8 all done (see `docs/plans/part-2-grpc.md` and `PROGRESS.md`'s Part 2 section for the full task list). Worker-coordinator transport is now gRPC; REST external surface unchanged. `go build`/`go vet`/`go test -race` all pass; verified end-to-end both via an automated integration test and by running the real compiled binaries against real Docker. Not yet merged — next action is to open the PR for `part-2-grpc` → `main`.
 - **Update this section** (and `PROGRESS.md`) at the end of every session, even a short one, so the next session doesn't have to reconstruct state from git log.
 
 ## Rules that must never slip
