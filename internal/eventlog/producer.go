@@ -49,9 +49,12 @@ func (p *KafkaProducer) Publish(ctx context.Context, e Event) error {
 		if err != nil {
 			return err
 		}
-		defer func() { _ = conn.Close() }()
-		_, err = conn.WriteMessages(msg)
-		return err
+		_, writeErr := conn.WriteMessages(msg)
+		closeErr := conn.Close()
+		if writeErr != nil {
+			return writeErr
+		}
+		return closeErr
 	}); err != nil {
 		return fmt.Errorf("failed to publish event: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"time"
@@ -195,7 +196,10 @@ func (c *KafkaConsumer) Tail(ctx context.Context, fromOffset int64, onEvent func
 // onEvent returns an error, a message fails to decode, or the read itself
 // fails. done is true for the first three (permanent stop, err is what Tail
 // should return) and false for the last (transient, Tail reconnects and
-// resumes from nextOffset).
+// resumes from nextOffset). The transient error itself is logged here (not
+// returned — Tail's contract is that transient errors don't stop it) so a
+// persistently-failing-but-never-fatal loop is still visible somewhere
+// instead of silently retrying forever with no trace.
 func tailOnce(ctx context.Context, reader *kafka.Reader, offset int64, onEvent func(Event) error) (done bool, nextOffset int64, err error) {
 	for {
 		msg, err := reader.ReadMessage(ctx)
@@ -203,6 +207,7 @@ func tailOnce(ctx context.Context, reader *kafka.Reader, offset int64, onEvent f
 			if ctx.Err() != nil {
 				return true, offset, nil // context cancelled — clean shutdown
 			}
+			slog.Warn("eventlog: transient tail read error, reconnecting", "offset", offset, "error", err)
 			return false, offset, nil // transient — caller reconnects
 		}
 		var e Event
