@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 
 	jobv1 "github.com/ritvikreddygangula/forge/api/proto/gen/jobv1"
 	"github.com/ritvikreddygangula/forge/internal/coordinator"
+	"github.com/ritvikreddygangula/forge/internal/eventlog"
 	"github.com/ritvikreddygangula/forge/internal/job"
 )
 
@@ -22,8 +26,33 @@ func main() {
 	if grpcAddr == "" {
 		grpcAddr = ":9090"
 	}
+	brokersEnv := os.Getenv("REDPANDA_BROKERS")
+	if brokersEnv == "" {
+		brokersEnv = "localhost:9092"
+	}
+	brokers := strings.Split(brokersEnv, ",")
 
-	store := job.NewMemoryStore()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if err := eventlog.EnsureTopic(ctx, brokers); err != nil {
+		slog.Error("coordinator failed to reach Redpanda", "error", err)
+		os.Exit(1)
+	}
+
+	events, err := eventlog.NewKafkaConsumer(brokers).ReadAll(ctx)
+	if err != nil {
+		slog.Error("coordinator failed to replay event log", "error", err)
+		os.Exit(1)
+	}
+	rebuiltJobs := eventlog.Rebuild(events)
+
+	baseStore := job.NewMemoryStore()
+	baseStore.Rebuild(rebuiltJobs)
+	slog.Info("coordinator replayed event log", "jobs_restored", len(rebuiltJobs))
+
+	producer := eventlog.NewKafkaProducer(brokers)
+	store := eventlog.NewStore(baseStore, producer)
 
 	grpcLis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
