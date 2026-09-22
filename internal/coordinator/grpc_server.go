@@ -15,12 +15,19 @@ import (
 // REST Server uses — both are thin transports over one shared store.
 type GRPCServer struct {
 	jobv1.UnimplementedJobServiceServer
-	store job.Store
+	store    job.Store
+	raftGate *RaftGate // nil in single-node mode; see raft.go
 }
 
 func NewGRPCServer(store job.Store) *GRPCServer {
 	return &GRPCServer{store: store}
 }
+
+// SetRaftGate wires this replica's leader-election state into the server.
+// Called only when running as part of a raft cluster (Task 4.2c); a
+// GRPCServer with no gate set behaves exactly as it did before this Part —
+// every write handler treats a nil gate as "always leader."
+func (s *GRPCServer) SetRaftGate(g *RaftGate) { s.raftGate = g }
 
 func toProtoJob(j *job.Job) *jobv1.Job {
 	return &jobv1.Job{

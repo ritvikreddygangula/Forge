@@ -1,4 +1,11 @@
 services:
+  # Deliberately no --overprovisioned: that flag tells Redpanda to trade
+  # latency for not competing aggressively for host CPU, which caused
+  # reproducible sporadic timeouts once Part 4 added 3 coordinator replicas
+  # holding concurrent connections to this single-shard broker (confirmed by
+  # A/B testing with and without the flag — 5/5 clean without it vs.
+  # frequent client-side timeouts with it). Fine to drop for a local dev
+  # broker that isn't actually sharing host resources with anything.
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:latest
     container_name: forge-redpanda
@@ -6,7 +13,6 @@ services:
       - redpanda
       - start
       - --smp=1
-      - --overprovisioned
       - --node-id=0
       - --kafka-addr=PLAINTEXT://0.0.0.0:9092
       - --advertise-kafka-addr=PLAINTEXT://localhost:9092

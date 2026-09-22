@@ -654,9 +654,9 @@ Commit message: `feat(eventlog): add continuous tail for multi-replica replicati
 
 ```json
 [
-  {"id": "node1", "raft_addr": "127.0.0.1:7000", "rest_addr": "127.0.0.1:8080", "grpc_addr": "127.0.0.1:9090"},
-  {"id": "node2", "raft_addr": "127.0.0.1:7001", "rest_addr": "127.0.0.1:8081", "grpc_addr": "127.0.0.1:9091"},
-  {"id": "node3", "raft_addr": "127.0.0.1:7002", "rest_addr": "127.0.0.1:8082", "grpc_addr": "127.0.0.1:9092"}
+  {"id": "node1", "raft_addr": "127.0.0.1:7000", "rest_addr": "127.0.0.1:8080", "grpc_addr": "127.0.0.1:9190"},
+  {"id": "node2", "raft_addr": "127.0.0.1:7001", "rest_addr": "127.0.0.1:8081", "grpc_addr": "127.0.0.1:9191"},
+  {"id": "node3", "raft_addr": "127.0.0.1:7002", "rest_addr": "127.0.0.1:8082", "grpc_addr": "127.0.0.1:9192"}
 ]
 ```
 

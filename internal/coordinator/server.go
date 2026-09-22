@@ -12,8 +12,9 @@ import (
 )
 
 type Server struct {
-	store job.Store
-	mux   *http.ServeMux
+	store    job.Store
+	mux      *http.ServeMux
+	raftGate *RaftGate // nil in single-node mode; see raft.go
 }
 
 func NewServer(store job.Store) *Server {
@@ -21,6 +22,12 @@ func NewServer(store job.Store) *Server {
 	s.routes()
 	return s
 }
+
+// SetRaftGate wires this replica's leader-election state into the server.
+// Called only when running as part of a raft cluster (Task 4.2c); a Server
+// with no gate set behaves exactly as it did before this Part — every write
+// handler treats a nil gate as "always leader."
+func (s *Server) SetRaftGate(g *RaftGate) { s.raftGate = g }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
@@ -82,6 +89,7 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 
 	j, err := s.store.Create(req.Image, req.Command, req.TimeoutSeconds)
 	if err != nil {
+		slog.Error("failed to create job", "error", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}

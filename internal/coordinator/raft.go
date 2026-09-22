@@ -75,3 +75,49 @@ func NewRaftNode(cfg RaftNodeConfig) (*raft.Raft, error) {
 
 	return r, nil
 }
+
+// PeerInfo is one replica's full address set — its raft transport address
+// plus the REST/gRPC addresses followers forward write requests to once
+// they've identified the current leader via raft.
+type PeerInfo struct {
+	ID       string `json:"id"`
+	RaftAddr string `json:"raft_addr"`
+	RESTAddr string `json:"rest_addr"`
+	GRPCAddr string `json:"grpc_addr"`
+}
+
+// RaftGate answers "am I the leader" and "if not, who is" for the write
+// handlers (wired up in Task 4.3). A nil *RaftGate means single-node mode
+// (Parts 1-3's original behavior, unaffected by this Part) — every method on
+// it is nil-safe and treats a nil gate as "always leader, no one else to
+// forward to."
+type RaftGate struct {
+	raft  *raft.Raft
+	peers map[raft.ServerAddress]PeerInfo
+}
+
+func NewRaftGate(r *raft.Raft, peers []PeerInfo) *RaftGate {
+	byAddr := make(map[raft.ServerAddress]PeerInfo, len(peers))
+	for _, p := range peers {
+		byAddr[raft.ServerAddress(p.RaftAddr)] = p
+	}
+	return &RaftGate{raft: r, peers: byAddr}
+}
+
+func (g *RaftGate) IsLeader() bool {
+	return g == nil || g.raft.State() == raft.Leader
+}
+
+// Leader returns the current leader's peer info. ok is false if this gate is
+// nil (single-node mode) or raft hasn't identified a leader yet (mid-election).
+func (g *RaftGate) Leader() (PeerInfo, bool) {
+	if g == nil {
+		return PeerInfo{}, false
+	}
+	addr, _ := g.raft.LeaderWithID()
+	if addr == "" {
+		return PeerInfo{}, false
+	}
+	p, ok := g.peers[addr]
+	return p, ok
+}
