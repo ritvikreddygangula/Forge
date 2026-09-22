@@ -56,11 +56,37 @@ done yet.
 - `test: add gRPC integration test covering submit to result` — automates the manual submit→poll→execute→report→get cycle against real REST + gRPC servers.
 - `chore: remove worker-facing HTTP endpoints superseded by gRPC` — deleted `GET /internal/worker/poll` and `POST /internal/worker/result` once the gRPC path was proven.
 - `docs: update PROGRESS.md for Part 2` — this entry, plus README updates for the two-listener startup and `COORDINATOR_GRPC_ADDR`.
+- `fix: quote golangci-lint version as string, check ClaimNext errors in tests` — CI failure on the PR: `.golangci.yml`'s `version: 2` needed to be a string for golangci-lint v2.13.2's schema; fixing it surfaced 2 real unchecked-error findings in test code.
 
 **End-to-end verified twice:** the automated integration test (fake executor), and a manual run of the
 actual compiled binaries — submitted a job via REST, a real worker polled it over real gRPC on `:9090`,
 executed it in a real `alpine:3.19` Docker container, and reported back correctly. Same result as
 Part 1's HTTP version, confirming the transport swap didn't change behavior.
 
+## Part 3 — Kafka/Redpanda event log → `part-3-event-log`
+- `docs: add Part 3 event log implementation plan` — design verified against a real local Redpanda container before writing any code (topic-creation idempotency, offset semantics, empty-topic behavior).
+- `chore: add Redpanda service to docker-compose` — `deploy/docker-compose.yml` (first use of Compose in this project), `make compose-up`/`compose-down`.
+- `refactor(job): back the job store with the replay-rebuilt state` — `MemoryStore.Rebuild(jobs []*Job)`, restores FIFO queue order for still-queued jobs; moved ahead of the roadmap's listed order since later tasks depend on it.
+- `feat(eventlog): publish job-state transitions to Kafka-API topic` — `eventlog.Event`/`Rebuild` (pure fold), `KafkaProducer`/`KafkaConsumer`/`EnsureTopic` (real `segmentio/kafka-go`), and `eventlog.Store` — a `job.Store`-implementing decorator that publishes an event after each mutation, zero changes to REST/gRPC handlers.
+- `feat(coordinator): rebuild in-memory job state by replaying event log on startup` — `cmd/coordinator/main.go` now replays the full log into a fresh store before serving; new `REDPANDA_BROKERS` env var.
+- `test: add crash-recovery test (kill coordinator mid-job, restart, assert state rebuilt)` — the headline proof, against a real broker, no mocked Kafka.
+- `docs: update PROGRESS.md for Part 3` — this entry; README crash-recovery walkthrough.
+
+**Three real bugs found and fixed by stress-testing, not just reasoning about the code:**
+- `kafka.Reader`'s default `MaxWait` (10s) meant every replay silently took ~10s even with data already
+  present — set to 250ms.
+- Hardcoding the topic name (`"job-events"`) meant all tests shared one topic; a queued-but-never-claimed
+  job left behind by one test polluted another test's FIFO assertions. Fixed by parameterizing the topic
+  everywhere; production still defaults to `eventlog.DefaultTopic`.
+- `kafka.Writer`'s topic-metadata cache (`Transport.MetadataTTL`, default 15s) made retrying a failed
+  publish to a freshly-created topic pointless — the retry kept hitting the same stale cached answer.
+  Set to 250ms. Found only by running the integration suite 8-12x in a row; a single passing run gave no
+  signal either bug existed.
+
+**Crash recovery verified twice:** the automated test above, and manually with the real compiled
+coordinator binary — submitted and completed a real job, killed the process outright, started a brand
+new one against the same Redpanda broker, got `jobs_restored=1` and the exact same job status/stdout
+back with zero in-process continuity between the two coordinator instances.
+
 ## Next
-Branch 3 (`part-3-event-log`) — not started yet.
+Branch 4 (`part-4-raft`) — not started yet.
