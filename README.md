@@ -14,7 +14,18 @@ Ensure Docker/Colima is running. If you don't already have Colima started, run:
 colima start
 ```
 
-### Step 1: Start the coordinator
+### Step 1: Start Redpanda
+
+The coordinator publishes every job-state transition to Redpanda and replays it on startup, so it needs
+to be running first:
+
+```bash
+make compose-up
+```
+
+(`make compose-down` to stop it when you're done.)
+
+### Step 2: Start the coordinator
 
 In one terminal, start the coordinator. It listens on two ports: REST on `:8080` (for submitting jobs
 and checking status) and gRPC on `:9090` (for the worker):
@@ -25,11 +36,15 @@ make run-coordinator
 
 You should see output like:
 ```
+INFO coordinator replayed event log jobs_restored=0
 INFO coordinator gRPC starting addr=:9090
 INFO coordinator HTTP starting addr=:8080
 ```
 
-### Step 2: Start the worker
+(`jobs_restored` will be non-zero if you've run jobs against this Redpanda before — see "Crash
+recovery" below.)
+
+### Step 3: Start the worker
 
 In another terminal, start the worker pointing to the coordinator's gRPC port:
 
@@ -39,7 +54,7 @@ make run-worker
 
 The worker will begin polling the coordinator for jobs over gRPC.
 
-### Step 3: Submit and track a job
+### Step 4: Submit and track a job
 
 Using `curl`, submit a job to the coordinator and retrieve its status:
 
@@ -57,11 +72,28 @@ Within ~2 seconds, you should see `"status":"succeeded"` in the response, along 
 
 Note: the first run will also pull the `alpine:3.19` image, which can take longer than the timeout below allows — for a fresh machine, consider a higher `timeout_seconds` on the first try.
 
+### Crash recovery
+
+Every job-state transition is durably logged to Redpanda, not just held in memory — so killing the
+coordinator doesn't lose job history. With a job already submitted and completed (Step 4 above), kill
+the coordinator (Ctrl-C) and start a fresh one:
+
+```bash
+make run-coordinator
+```
+
+The log line changes to `jobs_restored=1` (or however many jobs you've run), and the same `curl
+localhost:8080/jobs/$JOB_ID` from Step 4 returns the exact same status and stdout as before the
+restart — rebuilt entirely by replaying the Redpanda log, with zero in-process continuity between the
+old coordinator process and the new one.
+
 ### Environment variables
 
 - `COORDINATOR_ADDR` — the coordinator's REST listen address (default `:8080`).
 - `COORDINATOR_GRPC_ADDR` — the coordinator's gRPC listen address (default `:9090`); on the worker side,
   the same variable is the address it dials (default `localhost:9090`).
+- `REDPANDA_BROKERS` — comma-separated Redpanda broker address(es) the coordinator publishes to and
+  replays from (default `localhost:9092`).
 
 ### Regenerating gRPC code
 

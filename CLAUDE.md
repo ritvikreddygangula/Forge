@@ -11,8 +11,8 @@ few rules that must never silently slip.
 5. A per-part detailed TDD plan in `docs/plans/` if one exists for the part in progress (e.g. `part-0-1-http-skeleton.md`); if the current part doesn't have one yet, write it before writing code.
 
 ## Where things stand right now
-- **Done and merged to `main`:** Part 0 (scaffold) + Part 1 (plain HTTP coordinator/worker, `part-1-http-skeleton`, PR #1). Verified end-to-end with a real Docker container via Colima.
-- **In progress:** Branch 2 (`part-2-grpc`) — Tasks 2.1–2.8 all done (see `docs/plans/part-2-grpc.md` and `PROGRESS.md`'s Part 2 section for the full task list). Worker-coordinator transport is now gRPC; REST external surface unchanged. `go build`/`go vet`/`go test -race` all pass; verified end-to-end both via an automated integration test and by running the real compiled binaries against real Docker. Not yet merged — next action is to open the PR for `part-2-grpc` → `main`.
+- **Done and merged to `main`:** Part 0 (scaffold), Part 1 (plain HTTP coordinator/worker, PR #1), Part 2 (gRPC transport, PR #2).
+- **In progress:** Branch 3 (`part-3-event-log`) — Tasks 3.1–3.6 all done (see `docs/plans/part-3-event-log.md` and `PROGRESS.md`'s Part 3 section for the full task list, including 3 real concurrency/caching bugs found and fixed by stress-testing). Every job-state transition now publishes to Redpanda via `eventlog.Store` (a `job.Store`-implementing decorator — zero changes to REST/gRPC handlers); coordinator rebuilds full state from the log on startup. `go build`/`go vet`/`go test -race` and the integration suite (`-tags=integration`, needs `make compose-up` first) both pass, stress-tested 8-12x in a row. Not yet merged — next action is to open the PR for `part-3-event-log` → `main`.
 - **Update this section** (and `PROGRESS.md`) at the end of every session, even a short one, so the next session doesn't have to reconstruct state from git log.
 
 ## Rules that must never slip
