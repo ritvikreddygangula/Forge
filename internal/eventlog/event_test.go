@@ -52,3 +52,20 @@ func TestRebuild_IgnoresEventsForUnknownJob(t *testing.T) {
 		t.Fatalf("expected no jobs, got %+v", jobs)
 	}
 }
+
+func TestApplyEvent_FullLifecycle(t *testing.T) {
+	store := job.NewMemoryStore()
+	now := time.Now()
+
+	eventlog.ApplyEvent(store, eventlog.Event{Type: eventlog.EventJobCreated, JobID: "a", Image: "alpine", Command: []string{"true"}, TimeoutSeconds: 10, Timestamp: now})
+	eventlog.ApplyEvent(store, eventlog.Event{Type: eventlog.EventJobClaimed, JobID: "a", Timestamp: now})
+	eventlog.ApplyEvent(store, eventlog.Event{Type: eventlog.EventJobCompleted, JobID: "a", Status: job.StatusSucceeded, Stdout: "ok\n", Timestamp: now})
+
+	got, err := store.Get("a")
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusSucceeded || got.Stdout != "ok\n" {
+		t.Fatalf("expected succeeded job with stdout ok, got %+v", got)
+	}
+}

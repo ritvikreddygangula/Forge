@@ -172,6 +172,85 @@ func TestMemoryStore_Rebuild(t *testing.T) {
 	}
 }
 
+func TestMemoryStore_ApplyCreated(t *testing.T) {
+	s := job.NewMemoryStore()
+	now := time.Now()
+	s.ApplyCreated(&job.Job{ID: "a", Image: "alpine", Command: []string{"true"}, Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now})
+
+	got, err := s.Get("a")
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusQueued {
+		t.Fatalf("expected status queued, got %s", got.Status)
+	}
+	claimed, err := s.ClaimNext()
+	if err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if claimed == nil || claimed.ID != "a" {
+		t.Fatalf("expected applied job to be claimable, got %+v", claimed)
+	}
+}
+
+func TestMemoryStore_ApplyCreated_IgnoresDuplicates(t *testing.T) {
+	s := job.NewMemoryStore()
+	now := time.Now()
+	s.ApplyCreated(&job.Job{ID: "a", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now})
+	if _, err := s.ClaimNext(); err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if err := s.Complete("a", job.StatusSucceeded, "done\n", "", 0); err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+
+	// Re-applying JobCreated for the same ID (as happens when a replica
+	// tails back its own already-locally-applied write) must not revert
+	// progress that happened in between.
+	s.ApplyCreated(&job.Job{ID: "a", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now})
+
+	got, err := s.Get("a")
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusSucceeded || got.Stdout != "done\n" {
+		t.Fatalf("expected re-applying create to be a no-op, got %+v", got)
+	}
+}
+
+func TestMemoryStore_ApplyClaimed(t *testing.T) {
+	s := job.NewMemoryStore()
+	now := time.Now()
+	s.ApplyCreated(&job.Job{ID: "a", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now})
+
+	s.ApplyClaimed("a", now)
+
+	got, err := s.Get("a")
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusRunning {
+		t.Fatalf("expected status running, got %s", got.Status)
+	}
+}
+
+func TestMemoryStore_ApplyCompleted(t *testing.T) {
+	s := job.NewMemoryStore()
+	now := time.Now()
+	s.ApplyCreated(&job.Job{ID: "a", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now})
+	s.ApplyClaimed("a", now)
+
+	s.ApplyCompleted("a", job.StatusFailed, "", "boom\n", 1, now)
+
+	got, err := s.Get("a")
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusFailed || got.Stderr != "boom\n" || got.ExitCode != 1 {
+		t.Fatalf("expected failed job with stderr boom, got %+v", got)
+	}
+}
+
 func TestMemoryStore_Rebuild_ClearsPriorState(t *testing.T) {
 	s := job.NewMemoryStore()
 	if _, err := s.Create("alpine", []string{"true"}, 10); err != nil {

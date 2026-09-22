@@ -80,3 +80,21 @@ func Rebuild(events []Event) []*job.Job {
 	}
 	return result
 }
+
+// ApplyEvent applies one event directly onto a live store — the incremental
+// counterpart to Rebuild (which folds a whole batch into a fresh []*job.Job
+// at startup). Used by the continuous tail loop (Part 4), one event at a
+// time, as new writes arrive from whichever replica is currently leader.
+func ApplyEvent(store *job.MemoryStore, e Event) {
+	switch e.Type {
+	case EventJobCreated:
+		store.ApplyCreated(&job.Job{
+			ID: e.JobID, Image: e.Image, Command: e.Command, TimeoutSeconds: e.TimeoutSeconds,
+			Status: job.StatusQueued, CreatedAt: e.Timestamp, UpdatedAt: e.Timestamp,
+		})
+	case EventJobClaimed:
+		store.ApplyClaimed(e.JobID, e.Timestamp)
+	case EventJobCompleted:
+		store.ApplyCompleted(e.JobID, e.Status, e.Stdout, e.Stderr, e.ExitCode, e.Timestamp)
+	}
+}
