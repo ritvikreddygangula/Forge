@@ -54,7 +54,7 @@ func TestCrashRecovery_RebuildsStateFromLog(t *testing.T) {
 	// built fresh, touching only the Redpanda topic.
 
 	// "The restart": rebuild purely from the log.
-	events, err := eventlog.NewKafkaConsumer(brokers, topic).ReadAll(ctx)
+	events, _, err := eventlog.NewKafkaConsumer(brokers, topic).ReadAll(ctx)
 	if err != nil {
 		t.Fatalf("ReadAll returned error: %v", err)
 	}

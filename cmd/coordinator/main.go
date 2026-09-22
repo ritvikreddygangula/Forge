@@ -40,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	events, err := eventlog.NewKafkaConsumer(brokers, eventlog.DefaultTopic).ReadAll(ctx)
+	events, _, err := eventlog.NewKafkaConsumer(brokers, eventlog.DefaultTopic).ReadAll(ctx)
 	if err != nil {
 		slog.Error("coordinator failed to replay event log", "error", err)
 		os.Exit(1)
