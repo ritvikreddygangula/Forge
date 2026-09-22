@@ -4,6 +4,7 @@ package eventlog_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,19 +12,27 @@ import (
 	"github.com/ritvikreddygangula/forge/internal/job"
 )
 
+// testTopic returns a unique topic name per test, so runs never see events
+// left behind by other tests or prior runs against a long-lived dev broker.
+func testTopic(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf("job-events-test-%s-%d", t.Name(), time.Now().UnixNano())
+}
+
 func TestKafka_PublishAndReadAll_RoundTrip(t *testing.T) {
 	brokers := []string{"localhost:9092"}
+	topic := testTopic(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := eventlog.EnsureTopic(ctx, brokers); err != nil {
+	if err := eventlog.EnsureTopic(ctx, brokers, topic); err != nil {
 		t.Fatalf("EnsureTopic returned error: %v", err)
 	}
 
-	producer := eventlog.NewKafkaProducer(brokers)
+	producer := eventlog.NewKafkaProducer(brokers, topic)
 	defer func() { _ = producer.Close() }()
 
-	jobID := "kafka-roundtrip-" + time.Now().Format(time.RFC3339Nano)
+	jobID := "kafka-roundtrip-job"
 	if err := producer.Publish(ctx, eventlog.Event{
 		Type: eventlog.EventJobCreated, JobID: jobID, Image: "alpine",
 		Command: []string{"true"}, TimeoutSeconds: 10, Timestamp: time.Now(),
@@ -31,29 +40,16 @@ func TestKafka_PublishAndReadAll_RoundTrip(t *testing.T) {
 		t.Fatalf("Publish returned error: %v", err)
 	}
 
-	events, err := eventlog.NewKafkaConsumer(brokers).ReadAll(ctx)
+	events, err := eventlog.NewKafkaConsumer(brokers, topic).ReadAll(ctx)
 	if err != nil {
 		t.Fatalf("ReadAll returned error: %v", err)
 	}
-
-	var found bool
-	for _, e := range events {
-		if e.JobID == jobID && e.Type == eventlog.EventJobCreated {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected to find published event for job %s in %d replayed events", jobID, len(events))
+	if len(events) != 1 || events[0].JobID != jobID || events[0].Type != eventlog.EventJobCreated {
+		t.Fatalf("expected exactly one job_created event for %s, got %+v", jobID, events)
 	}
 
 	jobs := eventlog.Rebuild(events)
-	var rebuiltFound bool
-	for _, j := range jobs {
-		if j.ID == jobID && j.Status == job.StatusQueued {
-			rebuiltFound = true
-		}
-	}
-	if !rebuiltFound {
-		t.Fatalf("expected rebuilt job %s in queued state", jobID)
+	if len(jobs) != 1 || jobs[0].ID != jobID || jobs[0].Status != job.StatusQueued {
+		t.Fatalf("expected rebuilt job %s in queued state, got %+v", jobID, jobs)
 	}
 }

@@ -35,12 +35,12 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if err := eventlog.EnsureTopic(ctx, brokers); err != nil {
+	if err := eventlog.EnsureTopic(ctx, brokers, eventlog.DefaultTopic); err != nil {
 		slog.Error("coordinator failed to reach Redpanda", "error", err)
 		os.Exit(1)
 	}
 
-	events, err := eventlog.NewKafkaConsumer(brokers).ReadAll(ctx)
+	events, err := eventlog.NewKafkaConsumer(brokers, eventlog.DefaultTopic).ReadAll(ctx)
 	if err != nil {
 		slog.Error("coordinator failed to replay event log", "error", err)
 		os.Exit(1)
@@ -51,7 +51,7 @@ func main() {
 	baseStore.Rebuild(rebuiltJobs)
 	slog.Info("coordinator replayed event log", "jobs_restored", len(rebuiltJobs))
 
-	producer := eventlog.NewKafkaProducer(brokers)
+	producer := eventlog.NewKafkaProducer(brokers, eventlog.DefaultTopic)
 	store := eventlog.NewStore(baseStore, producer)
 
 	grpcLis, err := net.Listen("tcp", grpcAddr)
