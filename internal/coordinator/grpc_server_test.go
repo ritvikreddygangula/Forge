@@ -17,9 +17,14 @@ import (
 
 func dialGRPCServer(t *testing.T, store job.Store) jobv1.JobServiceClient {
 	t.Helper()
+	return dialGRPCServerInstance(t, coordinator.NewGRPCServer(store))
+}
+
+func dialGRPCServerInstance(t *testing.T, grpcServer *coordinator.GRPCServer) jobv1.JobServiceClient {
+	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
 	srv := grpc.NewServer()
-	jobv1.RegisterJobServiceServer(srv, coordinator.NewGRPCServer(store))
+	jobv1.RegisterJobServiceServer(srv, grpcServer)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 
@@ -46,6 +51,115 @@ func TestGRPC_PollJob_EmptyQueue(t *testing.T) {
 	}
 }
 
+func TestGRPC_PollJob_RecordsHeartbeat(t *testing.T) {
+	store := job.NewMemoryStore()
+	registry := coordinator.NewWorkerRegistry()
+	grpcServer := coordinator.NewGRPCServer(store)
+	grpcServer.SetWorkerRegistry(registry)
+	client := dialGRPCServerInstance(t, grpcServer)
+
+	if _, err := client.PollJob(context.Background(), &jobv1.PollJobRequest{WorkerId: "worker-1"}); err != nil {
+		t.Fatalf("PollJob returned error: %v", err)
+	}
+
+	// DeadWorkers with a zero timeout flags every KNOWN worker, regardless
+	// of how fresh — this is what distinguishes "heartbeated at all" from
+	// "never heard from" (which DeadWorkers never flags, by design). A
+	// generous timeout here would pass vacuously even if PollJob never
+	// recorded anything.
+	dead := registry.DeadWorkers(0, time.Now())
+	if len(dead) != 1 || dead[0] != "worker-1" {
+		t.Fatalf("expected worker-1 to be a known (heartbeated) worker, got %v", dead)
+	}
+}
+
+func TestGRPC_Heartbeat_RecordsHeartbeat(t *testing.T) {
+	store := job.NewMemoryStore()
+	registry := coordinator.NewWorkerRegistry()
+	grpcServer := coordinator.NewGRPCServer(store)
+	grpcServer.SetWorkerRegistry(registry)
+	client := dialGRPCServerInstance(t, grpcServer)
+
+	if _, err := client.Heartbeat(context.Background(), &jobv1.HeartbeatRequest{WorkerId: "worker-1"}); err != nil {
+		t.Fatalf("Heartbeat returned error: %v", err)
+	}
+
+	// Zero timeout flags any KNOWN worker regardless of freshness — the same
+	// vacuous-test trap as TestGRPC_PollJob_RecordsHeartbeat: a generous
+	// timeout would pass even if Heartbeat never recorded anything.
+	dead := registry.DeadWorkers(0, time.Now())
+	if len(dead) != 1 || dead[0] != "worker-1" {
+		t.Fatalf("expected worker-1 to be a known (heartbeated) worker, got %v", dead)
+	}
+}
+
+func TestGRPC_Heartbeat_ForwardsToLeaderWhenNotLeader(t *testing.T) {
+	nodes := newInMemRaftCluster(t, 2)
+	t.Cleanup(func() {
+		for _, n := range nodes {
+			_ = n.raft.Shutdown()
+		}
+	})
+	leader := waitForLeader(t, nodes, 2*time.Second)
+
+	type nodeServer struct {
+		registry *coordinator.WorkerRegistry
+		grpcSrv  *coordinator.GRPCServer
+		addr     string
+	}
+	servers := make(map[string]*nodeServer, len(nodes))
+	peers := make([]coordinator.PeerInfo, 0, len(nodes))
+	for _, n := range nodes {
+		registry := coordinator.NewWorkerRegistry()
+		grpcServer := coordinator.NewGRPCServer(job.NewMemoryStore())
+		grpcServer.SetWorkerRegistry(registry)
+		lis, err := net.Listen("tcp", "localhost:0")
+		if err != nil {
+			t.Fatalf("failed to listen: %v", err)
+		}
+		s := grpc.NewServer()
+		jobv1.RegisterJobServiceServer(s, grpcServer)
+		go func() { _ = s.Serve(lis) }()
+		t.Cleanup(s.Stop)
+
+		servers[n.id] = &nodeServer{registry: registry, grpcSrv: grpcServer, addr: lis.Addr().String()}
+		peers = append(peers, coordinator.PeerInfo{
+			ID:       n.id,
+			RaftAddr: string(n.transport.LocalAddr()),
+			GRPCAddr: lis.Addr().String(),
+		})
+	}
+	for _, n := range nodes {
+		servers[n.id].grpcSrv.SetRaftGate(coordinator.NewRaftGate(n.raft, peers))
+	}
+
+	var followerID string
+	for _, n := range nodes {
+		if n.id != leader.id {
+			followerID = n.id
+		}
+	}
+
+	conn, err := grpc.NewClient(servers[followerID].addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("failed to dial follower: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	client := jobv1.NewJobServiceClient(conn)
+
+	if _, err := client.Heartbeat(context.Background(), &jobv1.HeartbeatRequest{WorkerId: "worker-1"}); err != nil {
+		t.Fatalf("Heartbeat returned error: %v", err)
+	}
+
+	dead := servers[leader.id].registry.DeadWorkers(0, time.Now())
+	if len(dead) != 1 || dead[0] != "worker-1" {
+		t.Fatalf("expected the leader's registry to record the forwarded heartbeat, got %v", dead)
+	}
+	if dead := servers[followerID].registry.DeadWorkers(0, time.Now()); len(dead) != 0 {
+		t.Fatalf("expected the follower's own registry untouched, got %v", dead)
+	}
+}
+
 func TestGRPC_PollJob_ClaimsQueuedJob(t *testing.T) {
 	store := job.NewMemoryStore()
 	created, _ := store.Create("alpine", []string{"true"}, 10)
@@ -66,7 +180,7 @@ func TestGRPC_PollJob_ClaimsQueuedJob(t *testing.T) {
 func TestGRPC_ReportResult_Success(t *testing.T) {
 	store := job.NewMemoryStore()
 	created, _ := store.Create("alpine", []string{"true"}, 10)
-	if _, err := store.ClaimNext(); err != nil {
+	if _, err := store.ClaimNext("worker-1"); err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
 	client := dialGRPCServer(t, store)
@@ -191,7 +305,7 @@ func TestGRPC_PollJob_ForwardsToLeaderWhenNotLeader(t *testing.T) {
 func TestGRPC_StreamLogs(t *testing.T) {
 	store := job.NewMemoryStore()
 	created, _ := store.Create("alpine", []string{"true"}, 10)
-	if _, err := store.ClaimNext(); err != nil {
+	if _, err := store.ClaimNext("worker-1"); err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
 	if err := store.Complete(created.ID, job.StatusSucceeded, "hello\n", "", 0); err != nil {

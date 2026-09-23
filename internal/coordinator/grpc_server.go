@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -18,8 +19,9 @@ import (
 // REST Server uses — both are thin transports over one shared store.
 type GRPCServer struct {
 	jobv1.UnimplementedJobServiceServer
-	store    job.Store
-	raftGate *RaftGate // nil in single-node mode; see raft.go
+	store          job.Store
+	raftGate       *RaftGate       // nil in single-node mode; see raft.go
+	workerRegistry *WorkerRegistry // nil means "don't track" — every existing test leaves this unset
 
 	mu          sync.Mutex
 	leaderConns map[string]*grpc.ClientConn // lazily dialed, keyed by leader gRPC addr
@@ -34,6 +36,11 @@ func NewGRPCServer(store job.Store) *GRPCServer {
 // GRPCServer with no gate set behaves exactly as it did before this Part —
 // every write handler treats a nil gate as "always leader."
 func (s *GRPCServer) SetRaftGate(g *RaftGate) { s.raftGate = g }
+
+// SetWorkerRegistry wires in heartbeat tracking. Left unset, PollJob simply
+// doesn't record heartbeats — existing tests that don't care about worker
+// liveness are unaffected.
+func (s *GRPCServer) SetWorkerRegistry(r *WorkerRegistry) { s.workerRegistry = r }
 
 func toProtoJob(j *job.Job) *jobv1.Job {
 	return &jobv1.Job{
@@ -78,7 +85,11 @@ func (s *GRPCServer) PollJob(ctx context.Context, req *jobv1.PollJobRequest) (*j
 		return client.PollJob(ctx, req)
 	}
 
-	j, err := s.store.ClaimNext()
+	if s.workerRegistry != nil {
+		s.workerRegistry.Heartbeat(req.WorkerId, time.Now())
+	}
+
+	j, err := s.store.ClaimNext(req.WorkerId)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to claim job")
 	}
@@ -86,6 +97,25 @@ func (s *GRPCServer) PollJob(ctx context.Context, req *jobv1.PollJobRequest) (*j
 		return &jobv1.PollJobResponse{HasJob: false}, nil
 	}
 	return &jobv1.PollJobResponse{HasJob: true, Job: toProtoJob(j)}, nil
+}
+
+// Heartbeat lets a worker keep its liveness fresh while blocked executing a
+// long job — PollJob doubles as a heartbeat too, but a worker doesn't poll
+// again until its current job finishes, so a job that outlives the
+// dead-worker timeout needs this to avoid being falsely reaped mid-run.
+func (s *GRPCServer) Heartbeat(ctx context.Context, req *jobv1.HeartbeatRequest) (*jobv1.HeartbeatResponse, error) {
+	if !s.raftGate.IsLeader() {
+		client, err := s.leaderClient()
+		if err != nil {
+			return nil, err
+		}
+		return client.Heartbeat(ctx, req)
+	}
+
+	if s.workerRegistry != nil {
+		s.workerRegistry.Heartbeat(req.WorkerId, time.Now())
+	}
+	return &jobv1.HeartbeatResponse{}, nil
 }
 
 func (s *GRPCServer) ReportResult(ctx context.Context, req *jobv1.ReportResultRequest) (*jobv1.ReportResultResponse, error) {

@@ -38,7 +38,7 @@ func TestEventlogStore_ClaimNext_PublishesJobClaimed_OnlyWhenClaimed(t *testing.
 	base := job.NewMemoryStore()
 	s := eventlog.NewStore(base, fake)
 
-	if _, err := s.ClaimNext(); err != nil {
+	if _, err := s.ClaimNext("worker-1"); err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
 	if len(fake.events) != 0 {
@@ -49,7 +49,7 @@ func TestEventlogStore_ClaimNext_PublishesJobClaimed_OnlyWhenClaimed(t *testing.
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
-	claimed, err := s.ClaimNext()
+	claimed, err := s.ClaimNext("worker-1")
 	if err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
@@ -58,6 +58,33 @@ func TestEventlogStore_ClaimNext_PublishesJobClaimed_OnlyWhenClaimed(t *testing.
 	}
 	if len(fake.events) != 1 || fake.events[0].Type != eventlog.EventJobClaimed {
 		t.Fatalf("expected one job_claimed event, got %+v", fake.events)
+	}
+	if fake.events[0].WorkerID != "worker-1" {
+		t.Fatalf("expected event worker id worker-1, got %q", fake.events[0].WorkerID)
+	}
+}
+
+func TestEventlogStore_RequeueRunning_PublishesJobRequeued(t *testing.T) {
+	fake := &fakeProducer{}
+	base := job.NewMemoryStore()
+	s := eventlog.NewStore(base, fake)
+	created, err := base.Create("alpine", []string{"true"}, 10)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := base.ClaimNext("worker-1"); err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+
+	requeued, err := s.RequeueRunning("worker-1")
+	if err != nil {
+		t.Fatalf("RequeueRunning returned error: %v", err)
+	}
+	if len(requeued) != 1 || requeued[0].ID != created.ID {
+		t.Fatalf("expected job %s requeued, got %+v", created.ID, requeued)
+	}
+	if len(fake.events) != 1 || fake.events[0].Type != eventlog.EventJobRequeued {
+		t.Fatalf("expected one job_requeued event, got %+v", fake.events)
 	}
 }
 
@@ -69,7 +96,7 @@ func TestEventlogStore_Complete_PublishesJobCompleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
-	if _, err := base.ClaimNext(); err != nil {
+	if _, err := base.ClaimNext("worker-1"); err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
 

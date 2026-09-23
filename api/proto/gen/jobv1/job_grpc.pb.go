@@ -22,6 +22,7 @@ const (
 	JobService_PollJob_FullMethodName      = "/forge.job.v1.JobService/PollJob"
 	JobService_ReportResult_FullMethodName = "/forge.job.v1.JobService/ReportResult"
 	JobService_StreamLogs_FullMethodName   = "/forge.job.v1.JobService/StreamLogs"
+	JobService_Heartbeat_FullMethodName    = "/forge.job.v1.JobService/Heartbeat"
 )
 
 // JobServiceClient is the client API for JobService service.
@@ -36,6 +37,7 @@ type JobServiceClient interface {
 	PollJob(ctx context.Context, in *PollJobRequest, opts ...grpc.CallOption) (*PollJobResponse, error)
 	ReportResult(ctx context.Context, in *ReportResultRequest, opts ...grpc.CallOption) (*ReportResultResponse, error)
 	StreamLogs(ctx context.Context, in *StreamLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogChunk], error)
+	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 }
 
 type jobServiceClient struct {
@@ -85,6 +87,16 @@ func (c *jobServiceClient) StreamLogs(ctx context.Context, in *StreamLogsRequest
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type JobService_StreamLogsClient = grpc.ServerStreamingClient[LogChunk]
 
+func (c *jobServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HeartbeatResponse)
+	err := c.cc.Invoke(ctx, JobService_Heartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // JobServiceServer is the server API for JobService service.
 // All implementations must embed UnimplementedJobServiceServer
 // for forward compatibility.
@@ -97,6 +109,7 @@ type JobServiceServer interface {
 	PollJob(context.Context, *PollJobRequest) (*PollJobResponse, error)
 	ReportResult(context.Context, *ReportResultRequest) (*ReportResultResponse, error)
 	StreamLogs(*StreamLogsRequest, grpc.ServerStreamingServer[LogChunk]) error
+	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	mustEmbedUnimplementedJobServiceServer()
 }
 
@@ -115,6 +128,9 @@ func (UnimplementedJobServiceServer) ReportResult(context.Context, *ReportResult
 }
 func (UnimplementedJobServiceServer) StreamLogs(*StreamLogsRequest, grpc.ServerStreamingServer[LogChunk]) error {
 	return status.Error(codes.Unimplemented, "method StreamLogs not implemented")
+}
+func (UnimplementedJobServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
 }
 func (UnimplementedJobServiceServer) mustEmbedUnimplementedJobServiceServer() {}
 func (UnimplementedJobServiceServer) testEmbeddedByValue()                    {}
@@ -184,6 +200,24 @@ func _JobService_StreamLogs_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type JobService_StreamLogsServer = grpc.ServerStreamingServer[LogChunk]
 
+func _JobService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HeartbeatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(JobServiceServer).Heartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: JobService_Heartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(JobServiceServer).Heartbeat(ctx, req.(*HeartbeatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // JobService_ServiceDesc is the grpc.ServiceDesc for JobService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -198,6 +232,10 @@ var JobService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportResult",
 			Handler:    _JobService_ReportResult_Handler,
+		},
+		{
+			MethodName: "Heartbeat",
+			Handler:    _JobService_Heartbeat_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

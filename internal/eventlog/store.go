@@ -39,17 +39,37 @@ func (s *Store) Get(id string) (*job.Job, error) {
 	return s.inner.Get(id) // pure read — not a state transition, nothing to publish
 }
 
-func (s *Store) ClaimNext() (*job.Job, error) {
-	j, err := s.inner.ClaimNext()
+func (s *Store) ClaimNext(workerID string) (*job.Job, error) {
+	j, err := s.inner.ClaimNext(workerID)
 	if err != nil || j == nil {
 		return j, err
 	}
 	if err := s.producer.Publish(context.Background(), Event{
-		Type: EventJobClaimed, JobID: j.ID, Timestamp: time.Now(),
+		Type: EventJobClaimed, JobID: j.ID, WorkerID: workerID, Timestamp: time.Now(),
 	}); err != nil {
 		return nil, fmt.Errorf("job claimed but failed to publish event: %w", err)
 	}
 	return j, nil
+}
+
+// RequeueRunning requeues in-memory first, then publishes one event per
+// requeued job. Same known limitation as every other mutation here: a
+// publish failure after the local requeue already happened isn't rolled
+// back — the caller (the Reaper) gets an error and can retry on its next
+// tick, since the affected job is already visible as queued locally either way.
+func (s *Store) RequeueRunning(workerID string) ([]*job.Job, error) {
+	requeued, err := s.inner.RequeueRunning(workerID)
+	if err != nil {
+		return nil, err
+	}
+	for _, j := range requeued {
+		if pubErr := s.producer.Publish(context.Background(), Event{
+			Type: EventJobRequeued, JobID: j.ID, Timestamp: time.Now(),
+		}); pubErr != nil {
+			return requeued, fmt.Errorf("jobs requeued locally but failed to publish for %s: %w", j.ID, pubErr)
+		}
+	}
+	return requeued, nil
 }
 
 func (s *Store) Complete(id string, status job.Status, stdout, stderr string, exitCode int) error {

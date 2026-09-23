@@ -34,7 +34,7 @@ func TestCrashRecovery_RebuildsStateFromLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
-	if _, err := beforeCrash.ClaimNext(); err != nil {
+	if _, err := beforeCrash.ClaimNext("worker-1"); err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
 	if err := beforeCrash.Complete(completed.ID, job.StatusSucceeded, "done\n", "", 0); err != nil {
@@ -81,7 +81,7 @@ func TestCrashRecovery_RebuildsStateFromLog(t *testing.T) {
 	}
 
 	// And it's genuinely still claimable post-restart, not just readable.
-	claimed, err := afterCrash.ClaimNext()
+	claimed, err := afterCrash.ClaimNext("worker-2")
 	if err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
