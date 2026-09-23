@@ -53,6 +53,18 @@ func TestRebuild_IgnoresEventsForUnknownJob(t *testing.T) {
 	}
 }
 
+func TestRebuild_RequeuedJobReturnsToQueued(t *testing.T) {
+	now := time.Now()
+	jobs := eventlog.Rebuild([]eventlog.Event{
+		{Type: eventlog.EventJobCreated, JobID: "a", Timestamp: now},
+		{Type: eventlog.EventJobClaimed, JobID: "a", WorkerID: "worker-1", Timestamp: now},
+		{Type: eventlog.EventJobRequeued, JobID: "a", Timestamp: now},
+	})
+	if len(jobs) != 1 || jobs[0].Status != job.StatusQueued || jobs[0].WorkerID != "" {
+		t.Fatalf("expected job back to queued with no worker, got %+v", jobs)
+	}
+}
+
 func TestApplyEvent_FullLifecycle(t *testing.T) {
 	store := job.NewMemoryStore()
 	now := time.Now()
@@ -67,5 +79,22 @@ func TestApplyEvent_FullLifecycle(t *testing.T) {
 	}
 	if got.Status != job.StatusSucceeded || got.Stdout != "ok\n" {
 		t.Fatalf("expected succeeded job with stdout ok, got %+v", got)
+	}
+}
+
+func TestApplyEvent_Requeued(t *testing.T) {
+	store := job.NewMemoryStore()
+	now := time.Now()
+
+	eventlog.ApplyEvent(store, eventlog.Event{Type: eventlog.EventJobCreated, JobID: "a", Timestamp: now})
+	eventlog.ApplyEvent(store, eventlog.Event{Type: eventlog.EventJobClaimed, JobID: "a", WorkerID: "worker-1", Timestamp: now})
+	eventlog.ApplyEvent(store, eventlog.Event{Type: eventlog.EventJobRequeued, JobID: "a", Timestamp: now})
+
+	got, err := store.Get("a")
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusQueued || got.WorkerID != "" {
+		t.Fatalf("expected queued with no worker, got %+v", got)
 	}
 }
