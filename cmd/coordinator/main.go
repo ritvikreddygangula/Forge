@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/hashicorp/raft"
+	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
 	"google.golang.org/grpc"
 
 	jobv1 "github.com/ritvikreddygangula/forge/api/proto/gen/jobv1"
@@ -108,12 +110,31 @@ func main() {
 			os.Exit(1)
 		}
 
+		dataDir := filepath.Join("data", replicaID, "raft")
+		if err := os.MkdirAll(dataDir, 0o755); err != nil {
+			slog.Error("coordinator failed to create raft data dir", "error", err)
+			os.Exit(1)
+		}
+		// One shared BoltStore for both roles, same pattern the in-memory
+		// version used with raft.NewInmemStore() serving both roles too —
+		// BoltStore implements both LogStore and StableStore from one file.
+		boltStore, err := raftboltdb.NewBoltStore(filepath.Join(dataDir, "raft.bolt"))
+		if err != nil {
+			slog.Error("coordinator failed to open raft bolt store", "error", err)
+			os.Exit(1)
+		}
+		snapshotStore, err := raft.NewFileSnapshotStore(dataDir, 2, os.Stderr)
+		if err != nil {
+			slog.Error("coordinator failed to open raft snapshot store", "error", err)
+			os.Exit(1)
+		}
+
 		r, err := coordinator.NewRaftNode(coordinator.RaftNodeConfig{
 			LocalID:            replicaID,
 			Transport:          transport,
-			LogStore:           raft.NewInmemStore(),
-			StableStore:        raft.NewInmemStore(),
-			SnapshotStore:      raft.NewInmemSnapshotStore(),
+			LogStore:           boltStore,
+			StableStore:        boltStore,
+			SnapshotStore:      snapshotStore,
 			Servers:            servers,
 			HeartbeatTimeout:   50 * time.Millisecond,
 			ElectionTimeout:    50 * time.Millisecond,
