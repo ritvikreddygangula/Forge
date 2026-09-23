@@ -46,6 +46,43 @@ func TestGRPC_PollJob_EmptyQueue(t *testing.T) {
 	}
 }
 
+func TestGRPC_PollJob_RecordsHeartbeat(t *testing.T) {
+	store := job.NewMemoryStore()
+	registry := coordinator.NewWorkerRegistry()
+	grpcServer := coordinator.NewGRPCServer(store)
+	grpcServer.SetWorkerRegistry(registry)
+
+	lis := bufconn.Listen(1024 * 1024)
+	srv := grpc.NewServer()
+	jobv1.RegisterJobServiceServer(srv, grpcServer)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("failed to dial bufconn: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := jobv1.NewJobServiceClient(conn)
+
+	if _, err := client.PollJob(context.Background(), &jobv1.PollJobRequest{WorkerId: "worker-1"}); err != nil {
+		t.Fatalf("PollJob returned error: %v", err)
+	}
+
+	// DeadWorkers with a zero timeout flags every KNOWN worker, regardless
+	// of how fresh — this is what distinguishes "heartbeated at all" from
+	// "never heard from" (which DeadWorkers never flags, by design). A
+	// generous timeout here would pass vacuously even if PollJob never
+	// recorded anything.
+	dead := registry.DeadWorkers(0, time.Now())
+	if len(dead) != 1 || dead[0] != "worker-1" {
+		t.Fatalf("expected worker-1 to be a known (heartbeated) worker, got %v", dead)
+	}
+}
+
 func TestGRPC_PollJob_ClaimsQueuedJob(t *testing.T) {
 	store := job.NewMemoryStore()
 	created, _ := store.Create("alpine", []string{"true"}, 10)
