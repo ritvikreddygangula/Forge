@@ -21,6 +21,7 @@ import (
 	"github.com/ritvikreddygangula/forge/internal/coordinator"
 	"github.com/ritvikreddygangula/forge/internal/eventlog"
 	"github.com/ritvikreddygangula/forge/internal/job"
+	"github.com/ritvikreddygangula/forge/internal/worker"
 )
 
 func main() {
@@ -159,6 +160,13 @@ func main() {
 		slog.Info("coordinator raft node started", "replica_id", replicaID, "raft_addr", self.RaftAddr)
 	}
 
+	// Dead-worker timeout is a multiple of the worker's own poll interval —
+	// a couple of missed polls should trigger reassignment, not one, so a
+	// worker between two ordinary polls never gets wrongly reaped.
+	workerRegistry := coordinator.NewWorkerRegistry()
+	reaper := coordinator.NewReaper(workerRegistry, store, raftGate, 3*worker.DefaultPollInterval)
+	go reaper.Run(ctx, worker.DefaultPollInterval)
+
 	grpcLis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		slog.Error("coordinator failed to listen (gRPC)", "error", err)
@@ -166,6 +174,7 @@ func main() {
 	}
 	grpcServer := coordinator.NewGRPCServer(store)
 	grpcServer.SetRaftGate(raftGate)
+	grpcServer.SetWorkerRegistry(workerRegistry)
 	grpcSrv := grpc.NewServer()
 	jobv1.RegisterJobServiceServer(grpcSrv, grpcServer)
 	go func() {

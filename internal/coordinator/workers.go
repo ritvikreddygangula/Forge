@@ -1,8 +1,12 @@
 package coordinator
 
 import (
+	"context"
+	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/ritvikreddygangula/forge/internal/job"
 )
 
 // WorkerRegistry tracks the last time each worker was heard from — every
@@ -47,4 +51,51 @@ func (r *WorkerRegistry) Forget(workerID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.lastSeen, workerID)
+}
+
+// Reaper periodically requeues jobs held by workers that have stopped
+// polling. Only acts when this replica is the raft leader (a nil gate — see
+// RaftGate — means single-node mode, always "leader").
+type Reaper struct {
+	registry *WorkerRegistry
+	store    job.Store
+	gate     *RaftGate
+	timeout  time.Duration
+}
+
+func NewReaper(registry *WorkerRegistry, store job.Store, gate *RaftGate, timeout time.Duration) *Reaper {
+	return &Reaper{registry: registry, store: store, gate: gate, timeout: timeout}
+}
+
+// Tick checks once for dead workers and requeues their jobs. Exported and
+// separate from Run so tests can drive it with an explicit clock instead of
+// waiting on a real ticker.
+func (r *Reaper) Tick(now time.Time) {
+	if !r.gate.IsLeader() {
+		return
+	}
+	for _, workerID := range r.registry.DeadWorkers(r.timeout, now) {
+		requeued, err := r.store.RequeueRunning(workerID)
+		if err != nil {
+			slog.Error("reaper: failed to requeue jobs from dead worker", "worker_id", workerID, "error", err)
+			continue // leave it tracked, try again next tick
+		}
+		if len(requeued) > 0 {
+			slog.Info("reaper: reassigned jobs from dead worker", "worker_id", workerID, "count", len(requeued))
+		}
+		r.registry.Forget(workerID)
+	}
+}
+
+func (r *Reaper) Run(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.Tick(time.Now())
+		}
+	}
 }

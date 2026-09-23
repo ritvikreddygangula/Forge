@@ -23,7 +23,10 @@ const (
 
 type PollJobRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Every poll doubles as a heartbeat — no separate heartbeat RPC exists.
+	// Every poll doubles as a heartbeat. But a worker executing a job doesn't
+	// poll again until it finishes, so a job that runs longer than the
+	// dead-worker timeout needs Heartbeat below to avoid being falsely reaped
+	// mid-execution.
 	WorkerId      string `protobuf:"bytes,1,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -395,6 +398,86 @@ func (x *LogChunk) GetData() string {
 	return ""
 }
 
+type HeartbeatRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkerId      string                 `protobuf:"bytes,1,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HeartbeatRequest) Reset() {
+	*x = HeartbeatRequest{}
+	mi := &file_jobv1_job_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HeartbeatRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HeartbeatRequest) ProtoMessage() {}
+
+func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_jobv1_job_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
+func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
+	return file_jobv1_job_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *HeartbeatRequest) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+type HeartbeatResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HeartbeatResponse) Reset() {
+	*x = HeartbeatResponse{}
+	mi := &file_jobv1_job_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HeartbeatResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HeartbeatResponse) ProtoMessage() {}
+
+func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_jobv1_job_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
+func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
+	return file_jobv1_job_proto_rawDescGZIP(), []int{8}
+}
+
 var File_jobv1_job_proto protoreflect.FileDescriptor
 
 const file_jobv1_job_proto_rawDesc = "" +
@@ -421,13 +504,17 @@ const file_jobv1_job_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"6\n" +
 	"\bLogChunk\x12\x16\n" +
 	"\x06stream\x18\x01 \x01(\tR\x06stream\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\tR\x04data2\xf4\x01\n" +
+	"\x04data\x18\x02 \x01(\tR\x04data\"/\n" +
+	"\x10HeartbeatRequest\x12\x1b\n" +
+	"\tworker_id\x18\x01 \x01(\tR\bworkerId\"\x13\n" +
+	"\x11HeartbeatResponse2\xc2\x02\n" +
 	"\n" +
 	"JobService\x12F\n" +
 	"\aPollJob\x12\x1c.forge.job.v1.PollJobRequest\x1a\x1d.forge.job.v1.PollJobResponse\x12U\n" +
 	"\fReportResult\x12!.forge.job.v1.ReportResultRequest\x1a\".forge.job.v1.ReportResultResponse\x12G\n" +
 	"\n" +
-	"StreamLogs\x12\x1f.forge.job.v1.StreamLogsRequest\x1a\x16.forge.job.v1.LogChunk0\x01B?Z=github.com/ritvikreddygangula/forge/api/proto/gen/jobv1;jobv1b\x06proto3"
+	"StreamLogs\x12\x1f.forge.job.v1.StreamLogsRequest\x1a\x16.forge.job.v1.LogChunk0\x01\x12L\n" +
+	"\tHeartbeat\x12\x1e.forge.job.v1.HeartbeatRequest\x1a\x1f.forge.job.v1.HeartbeatResponseB?Z=github.com/ritvikreddygangula/forge/api/proto/gen/jobv1;jobv1b\x06proto3"
 
 var (
 	file_jobv1_job_proto_rawDescOnce sync.Once
@@ -441,7 +528,7 @@ func file_jobv1_job_proto_rawDescGZIP() []byte {
 	return file_jobv1_job_proto_rawDescData
 }
 
-var file_jobv1_job_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_jobv1_job_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_jobv1_job_proto_goTypes = []any{
 	(*PollJobRequest)(nil),       // 0: forge.job.v1.PollJobRequest
 	(*PollJobResponse)(nil),      // 1: forge.job.v1.PollJobResponse
@@ -450,17 +537,21 @@ var file_jobv1_job_proto_goTypes = []any{
 	(*ReportResultResponse)(nil), // 4: forge.job.v1.ReportResultResponse
 	(*StreamLogsRequest)(nil),    // 5: forge.job.v1.StreamLogsRequest
 	(*LogChunk)(nil),             // 6: forge.job.v1.LogChunk
+	(*HeartbeatRequest)(nil),     // 7: forge.job.v1.HeartbeatRequest
+	(*HeartbeatResponse)(nil),    // 8: forge.job.v1.HeartbeatResponse
 }
 var file_jobv1_job_proto_depIdxs = []int32{
 	2, // 0: forge.job.v1.PollJobResponse.job:type_name -> forge.job.v1.Job
 	0, // 1: forge.job.v1.JobService.PollJob:input_type -> forge.job.v1.PollJobRequest
 	3, // 2: forge.job.v1.JobService.ReportResult:input_type -> forge.job.v1.ReportResultRequest
 	5, // 3: forge.job.v1.JobService.StreamLogs:input_type -> forge.job.v1.StreamLogsRequest
-	1, // 4: forge.job.v1.JobService.PollJob:output_type -> forge.job.v1.PollJobResponse
-	4, // 5: forge.job.v1.JobService.ReportResult:output_type -> forge.job.v1.ReportResultResponse
-	6, // 6: forge.job.v1.JobService.StreamLogs:output_type -> forge.job.v1.LogChunk
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
+	7, // 4: forge.job.v1.JobService.Heartbeat:input_type -> forge.job.v1.HeartbeatRequest
+	1, // 5: forge.job.v1.JobService.PollJob:output_type -> forge.job.v1.PollJobResponse
+	4, // 6: forge.job.v1.JobService.ReportResult:output_type -> forge.job.v1.ReportResultResponse
+	6, // 7: forge.job.v1.JobService.StreamLogs:output_type -> forge.job.v1.LogChunk
+	8, // 8: forge.job.v1.JobService.Heartbeat:output_type -> forge.job.v1.HeartbeatResponse
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -477,7 +568,7 @@ func file_jobv1_job_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_jobv1_job_proto_rawDesc), len(file_jobv1_job_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

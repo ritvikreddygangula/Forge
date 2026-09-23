@@ -12,10 +12,14 @@ service JobService {
   rpc PollJob(PollJobRequest) returns (PollJobResponse);
   rpc ReportResult(ReportResultRequest) returns (ReportResultResponse);
   rpc StreamLogs(StreamLogsRequest) returns (stream LogChunk);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
 
 message PollJobRequest {
-  // Every poll doubles as a heartbeat — no separate heartbeat RPC exists.
+  // Every poll doubles as a heartbeat. But a worker executing a job doesn't
+  // poll again until it finishes, so a job that runs longer than the
+  // dead-worker timeout needs Heartbeat below to avoid being falsely reaped
+  // mid-execution.
   string worker_id = 1;
 }
 
@@ -50,3 +54,9 @@ message LogChunk {
   string stream = 1; // "stdout" or "stderr"
   string data = 2;
 }
+
+message HeartbeatRequest {
+  string worker_id = 1;
+}
+
+message HeartbeatResponse {}

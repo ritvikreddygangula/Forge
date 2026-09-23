@@ -3,7 +3,9 @@ package worker_test
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
@@ -17,6 +19,9 @@ type fakeJobServer struct {
 	jobv1.UnimplementedJobServiceServer
 	pollResp *jobv1.PollJobResponse
 	reported *jobv1.ReportResultRequest
+
+	mu             sync.Mutex
+	heartbeatCount int
 }
 
 func (f *fakeJobServer) PollJob(ctx context.Context, req *jobv1.PollJobRequest) (*jobv1.PollJobResponse, error) {
@@ -26,6 +31,19 @@ func (f *fakeJobServer) PollJob(ctx context.Context, req *jobv1.PollJobRequest) 
 func (f *fakeJobServer) ReportResult(ctx context.Context, req *jobv1.ReportResultRequest) (*jobv1.ReportResultResponse, error) {
 	f.reported = req
 	return &jobv1.ReportResultResponse{}, nil
+}
+
+func (f *fakeJobServer) Heartbeat(ctx context.Context, req *jobv1.HeartbeatRequest) (*jobv1.HeartbeatResponse, error) {
+	f.mu.Lock()
+	f.heartbeatCount++
+	f.mu.Unlock()
+	return &jobv1.HeartbeatResponse{}, nil
+}
+
+func (f *fakeJobServer) HeartbeatCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.heartbeatCount
 }
 
 func newTestLoop(t *testing.T, fake *fakeJobServer) *worker.Loop {
@@ -84,6 +102,30 @@ func TestLoop_RunOnce_ExecutesAndReportsSuccess(t *testing.T) {
 	}
 	if fake.reported.Status != "succeeded" {
 		t.Fatalf("expected status succeeded, got %v", fake.reported.Status)
+	}
+}
+
+// TestLoop_RunOnce_HeartbeatsWhileExecuting proves a worker keeps sending
+// heartbeats while blocked inside a long Execute call, not just on the poll
+// that claimed the job. Without this, a job that outlives the coordinator's
+// dead-worker timeout would make an actively-executing worker look dead.
+func TestLoop_RunOnce_HeartbeatsWhileExecuting(t *testing.T) {
+	fake := &fakeJobServer{pollResp: &jobv1.PollJobResponse{
+		HasJob: true,
+		Job:    &jobv1.Job{Id: "job-1", Image: "alpine", Command: []string{"sleep"}, TimeoutSeconds: 10},
+	}}
+	l := newTestLoop(t, fake)
+	l.PollInterval = 20 * time.Millisecond
+	l.Execute = func(ctx context.Context, image string, command []string, timeoutSeconds int) (worker.ExecResult, error) {
+		time.Sleep(90 * time.Millisecond)
+		return worker.ExecResult{ExitCode: 0}, nil
+	}
+
+	if err := l.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce returned error: %v", err)
+	}
+	if count := fake.HeartbeatCount(); count < 2 {
+		t.Fatalf("expected at least 2 heartbeats sent during a 90ms execution with a 20ms interval, got %d", count)
 	}
 }
 

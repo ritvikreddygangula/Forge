@@ -39,6 +39,17 @@ a deliberate, separate scope decision, not implied by "multiple workers").
 an implicit heartbeat** — a worker already polls every `PollInterval` (2s default) whether or not
 there's a job, so a separate heartbeat RPC would just be the same signal through a second door.
 
+**Revised after a manual smoke test caught a real bug (Task 5.4):** the above reasoning holds only
+*between* jobs. `Loop.RunOnce` blocks on `Execute` for the full job duration, so a worker executing a job
+sends no poll — and thus no heartbeat — until that job finishes. A real `sleep 30` job proved this:
+the reaper falsely reassigned the job at its 6s dead-worker timeout while the worker was still alive and
+actively running it, and (worse) once requeued, a second worker could have claimed and duplicate-executed
+the same job, with `MemoryStore.Complete` writing the final result by ID with no ownership check. Fixed by
+adding a real `Heartbeat(worker_id)` RPC that `Loop` calls on its own ticker from a goroutine running
+alongside `Execute`, so a worker keeps proving liveness independent of whether it's currently polling. The
+"no separate RPC needed" framing above was the original (wrong) assumption; it's kept here so the reasoning
+and its correction are both visible.
+
 ### Requeuing, not a new "assignment" concept
 
 `job.Job` gains a `WorkerID` field, set on claim. A new `job.Store.RequeueRunning(workerID)` finds any
@@ -81,7 +92,7 @@ polling it — nothing about the raft cluster is required to get multi-worker sc
 ## File structure (new/changed)
 
 ```
-api/proto/jobv1/job.proto              # MODIFIED — PollJobRequest gains worker_id
+api/proto/jobv1/job.proto              # MODIFIED — PollJobRequest gains worker_id; new Heartbeat RPC
 api/proto/gen/jobv1/                     # regenerated
 internal/
   job/
@@ -96,12 +107,12 @@ internal/
   coordinator/
     workers.go                                    # NEW — WorkerRegistry, Reaper
     workers_test.go                                # NEW
-    grpc_server.go                                  # MODIFIED — PollJob records heartbeat, passes worker_id
+    grpc_server.go                                  # MODIFIED — PollJob records heartbeat, passes worker_id; new Heartbeat handler (forwards to leader)
     grpc_server_test.go                              # MODIFIED
     scheduling_test.go                                # NEW — multi-worker + failure-reassignment test
     loadtest_test.go                                   # NEW — integration-tagged real load test
 internal/worker/
-  loop.go                                              # MODIFIED — Loop.ID, sent on every poll
+  loop.go                                              # MODIFIED — Loop.ID, sent on every poll; heartbeatWhileExecuting goroutine during Execute
   loop_test.go                                          # MODIFIED
 cmd/coordinator/main.go                                  # MODIFIED — wire WorkerRegistry + Reaper
 ```

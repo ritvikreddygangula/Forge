@@ -99,6 +99,25 @@ func (s *GRPCServer) PollJob(ctx context.Context, req *jobv1.PollJobRequest) (*j
 	return &jobv1.PollJobResponse{HasJob: true, Job: toProtoJob(j)}, nil
 }
 
+// Heartbeat lets a worker keep its liveness fresh while blocked executing a
+// long job — PollJob doubles as a heartbeat too, but a worker doesn't poll
+// again until its current job finishes, so a job that outlives the
+// dead-worker timeout needs this to avoid being falsely reaped mid-run.
+func (s *GRPCServer) Heartbeat(ctx context.Context, req *jobv1.HeartbeatRequest) (*jobv1.HeartbeatResponse, error) {
+	if !s.raftGate.IsLeader() {
+		client, err := s.leaderClient()
+		if err != nil {
+			return nil, err
+		}
+		return client.Heartbeat(ctx, req)
+	}
+
+	if s.workerRegistry != nil {
+		s.workerRegistry.Heartbeat(req.WorkerId, time.Now())
+	}
+	return &jobv1.HeartbeatResponse{}, nil
+}
+
 func (s *GRPCServer) ReportResult(ctx context.Context, req *jobv1.ReportResultRequest) (*jobv1.ReportResultResponse, error) {
 	if !s.raftGate.IsLeader() {
 		client, err := s.leaderClient()
