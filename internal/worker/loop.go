@@ -13,6 +13,7 @@ import (
 
 	jobv1 "github.com/ritvikreddygangula/forge/api/proto/gen/jobv1"
 	"github.com/ritvikreddygangula/forge/internal/job"
+	"github.com/ritvikreddygangula/forge/internal/metrics"
 )
 
 // DefaultPollInterval is how often a Loop polls when no other value is set.
@@ -83,7 +84,9 @@ func (l *Loop) RunOnce(ctx context.Context) error {
 
 	execDone := make(chan struct{})
 	go l.heartbeatWhileExecuting(ctx, execDone)
+	execStart := time.Now()
 	result, execErr := l.Execute(ctx, j.Image, j.Command, int(j.TimeoutSeconds))
+	metrics.WorkerExecutionDurationSeconds.Observe(time.Since(execStart).Seconds())
 	close(execDone)
 
 	status := string(job.StatusSucceeded)
@@ -93,6 +96,7 @@ func (l *Loop) RunOnce(ctx context.Context) error {
 	if execErr != nil {
 		result.Stderr = result.Stderr + "\n" + execErr.Error()
 	}
+	metrics.WorkerJobsExecutedTotal.WithLabelValues(status).Inc()
 
 	_, err = l.client.ReportResult(ctx, &jobv1.ReportResultRequest{
 		Id:       j.Id,

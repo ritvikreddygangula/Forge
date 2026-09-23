@@ -111,9 +111,9 @@ docs/plans/part-8-observability.md                # this file
 `internal/worker/loop.go`, `internal/worker/loop_test.go`, `cmd/coordinator/main.go`, `cmd/worker/main.go`.
 Add `github.com/prometheus/client_golang` (`v1.24.1`) to `go.mod`.
 
-- [ ] **Step 1:** `go get github.com/prometheus/client_golang@v1.24.1`
+- [x] **Step 1:** `go get github.com/prometheus/client_golang@v1.24.1`
 
-- [ ] **Step 2: Write the failing tests** — `internal/metrics/store_test.go`. Assertions use
+- [x] **Step 2: Write the failing tests** — `internal/metrics/store_test.go`. Assertions use
   before/after **deltas**, not absolute values — these are process-global `promauto` metrics, so a test
   can't assume it's the only one that ever touched a given counter:
 
@@ -214,6 +214,20 @@ func TestMetricsStore_RequeueRunning_IncrementsJobsReassignedTotal(t *testing.T)
 	}
 }
 
+// histogramSampleCount reads the total number of observations a histogram
+// has recorded so far. testutil.CollectAndCount counts metric *series*
+// (always 1 for a histogram, regardless of how many Observe calls happened),
+// not observations — found this the hard way when the first version of this
+// test passed vacuously (1 -> 1 "matched" its own wrong expectation).
+func histogramSampleCount(t *testing.T) uint64 {
+	t.Helper()
+	var m dto.Metric
+	if err := metrics.JobDurationSeconds.Write(&m); err != nil {
+		t.Fatalf("failed to write histogram metric: %v", err)
+	}
+	return m.GetHistogram().GetSampleCount()
+}
+
 func TestMetricsStore_Complete_ObservesJobDuration(t *testing.T) {
 	inner := job.NewMemoryStore()
 	s := metrics.NewStore(inner)
@@ -221,19 +235,20 @@ func TestMetricsStore_Complete_ObservesJobDuration(t *testing.T) {
 	if _, err := inner.ClaimNext("worker-1"); err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
-	beforeCount := testutil.CollectAndCount(metrics.JobDurationSeconds)
+	beforeCount := histogramSampleCount(t)
 
 	if err := s.Complete(created.ID, job.StatusSucceeded, "ok\n", "", 0); err != nil {
 		t.Fatalf("Complete returned error: %v", err)
 	}
 
-	if after := testutil.CollectAndCount(metrics.JobDurationSeconds); after != beforeCount+1 {
+	if after := histogramSampleCount(t); after != beforeCount+1 {
 		t.Fatalf("expected one new job_duration_seconds observation, got %d -> %d", beforeCount, after)
 	}
 }
 ```
+  (needs `dto "github.com/prometheus/client_model/go"` added to the test file's imports.)
 
-- [ ] **Step 3: Run to verify failure, then implement** — `internal/metrics/store.go`:
+- [x] **Step 3: Run to verify failure, then implement** — `internal/metrics/store.go`:
 
 ```go
 package metrics
@@ -319,7 +334,7 @@ func (s *Store) Cancel(id string) (*job.Job, error) {
 }
 ```
 
-- [ ] **Step 4: Coordinator `/metrics` route** — `internal/coordinator/server.go`:
+- [x] **Step 4: Coordinator `/metrics` route** — `internal/coordinator/server.go`:
 
 ```go
 s.mux.Handle("GET /metrics", promhttp.Handler())
@@ -332,7 +347,7 @@ s.mux.Handle("GET /metrics", promhttp.Handler())
 store := metrics.NewStore(eventlog.NewStore(baseStore, producer))
 ```
 
-- [ ] **Step 5: Worker metrics + `/metrics` server** — new metrics in `internal/metrics/store.go`:
+- [x] **Step 5: Worker metrics + `/metrics` server** — new metrics in `internal/metrics/store.go`:
 
 ```go
 var (
@@ -375,7 +390,7 @@ go func() {
 }()
 ```
 
-- [ ] **Step 6: Run full suite, verify, commit**
+- [x] **Step 6: Run full suite, verify, commit**
 
 Run: `go build ./... && go test ./...`
 

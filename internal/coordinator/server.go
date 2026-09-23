@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/ritvikreddygangula/forge/internal/job"
 )
 
@@ -41,6 +43,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /jobs/{id}/logs", s.handleGetJobLogs)
 	s.mux.HandleFunc("DELETE /jobs/{id}", s.handleCancelJob)
 	s.mux.HandleFunc("GET /jobs/{id}/logs/stream", s.handleStreamJobLogs)
+	s.mux.Handle("GET /metrics", promhttp.Handler())
 }
 
 type submitJobRequest struct {

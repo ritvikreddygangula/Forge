@@ -310,3 +310,18 @@ func TestGET_JobsLogsStream_SendsSSEChunks(t *testing.T) {
 		t.Fatalf("expected an stderr SSE event, got %q", body)
 	}
 }
+
+func TestGET_Metrics_ReturnsPrometheusFormat(t *testing.T) {
+	srv := coordinator.NewServer(job.NewMemoryStore())
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "go_goroutines") {
+		t.Fatalf("expected default Go runtime metrics in output, got %q", rec.Body.String())
+	}
+}
