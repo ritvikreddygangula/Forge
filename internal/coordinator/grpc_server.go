@@ -78,7 +78,7 @@ func (s *GRPCServer) PollJob(ctx context.Context, req *jobv1.PollJobRequest) (*j
 		return client.PollJob(ctx, req)
 	}
 
-	j, err := s.store.ClaimNext()
+	j, err := s.store.ClaimNext(req.WorkerId)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to claim job")
 	}

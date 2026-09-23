@@ -13,8 +13,9 @@ var ErrNotFound = errors.New("job not found")
 type Store interface {
 	Create(image string, command []string, timeoutSeconds int) (*Job, error)
 	Get(id string) (*Job, error)
-	ClaimNext() (*Job, error)
+	ClaimNext(workerID string) (*Job, error)
 	Complete(id string, status Status, stdout, stderr string, exitCode int) error
+	RequeueRunning(workerID string) ([]*Job, error)
 }
 
 type MemoryStore struct {
@@ -60,7 +61,7 @@ func (s *MemoryStore) Get(id string) (*Job, error) {
 	return &cp, nil
 }
 
-func (s *MemoryStore) ClaimNext() (*Job, error) {
+func (s *MemoryStore) ClaimNext(workerID string) (*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -68,12 +69,35 @@ func (s *MemoryStore) ClaimNext() (*Job, error) {
 		j := s.jobs[id]
 		if j.Status == StatusQueued {
 			j.Status = StatusRunning
+			j.WorkerID = workerID
 			j.UpdatedAt = time.Now()
 			cp := *j
 			return &cp, nil
 		}
 	}
 	return nil, nil
+}
+
+// RequeueRunning finds any job still Running under the given worker ID and
+// moves it back to Queued — used when a worker has stopped heartbeating and
+// its in-flight job needs to be picked up by someone else. Goes to the back
+// of the FIFO queue, the same position a fresh Create would leave it in.
+func (s *MemoryStore) RequeueRunning(workerID string) ([]*Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var requeued []*Job
+	for _, j := range s.jobs {
+		if j.Status == StatusRunning && j.WorkerID == workerID {
+			j.Status = StatusQueued
+			j.WorkerID = ""
+			j.UpdatedAt = time.Now()
+			s.order = append(s.order, j.ID)
+			cp := *j
+			requeued = append(requeued, &cp)
+		}
+	}
+	return requeued, nil
 }
 
 // ApplyCreated inserts a job as queued. Used by a replica's continuous
@@ -96,11 +120,12 @@ func (s *MemoryStore) ApplyCreated(j *Job) {
 	}
 }
 
-// ApplyClaimed marks a specific job running. Unlike ClaimNext, the job ID is
-// already decided (by whichever replica was leader when the claim happened)
-// — this just replicates that decision. A no-op if the job is unknown or
-// already past queued, so replaying an already-applied event is harmless.
-func (s *MemoryStore) ApplyClaimed(id string, at time.Time) {
+// ApplyClaimed marks a specific job running under a specific worker. Unlike
+// ClaimNext, the job ID and worker are already decided (by whichever
+// replica was leader when the claim happened) — this just replicates that
+// decision. A no-op if the job is unknown or already past queued, so
+// replaying an already-applied event is harmless.
+func (s *MemoryStore) ApplyClaimed(id string, workerID string, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -109,7 +134,25 @@ func (s *MemoryStore) ApplyClaimed(id string, at time.Time) {
 		return
 	}
 	j.Status = StatusRunning
+	j.WorkerID = workerID
 	j.UpdatedAt = at
+}
+
+// ApplyRequeued marks a specific job queued again, clearing its worker.
+// Same replication role as ApplyClaimed, for the requeued transition — a
+// no-op if the job is unknown or not currently running.
+func (s *MemoryStore) ApplyRequeued(id string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	j, ok := s.jobs[id]
+	if !ok || j.Status != StatusRunning {
+		return
+	}
+	j.Status = StatusQueued
+	j.WorkerID = ""
+	j.UpdatedAt = at
+	s.order = append(s.order, id)
 }
 
 // ApplyCompleted marks a specific job terminal. Same replication role as

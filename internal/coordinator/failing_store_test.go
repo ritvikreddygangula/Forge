@@ -25,10 +25,14 @@ func (failingStore) Get(id string) (*job.Job, error) {
 	return nil, errStoreFailure
 }
 
-func (failingStore) ClaimNext() (*job.Job, error) {
+func (failingStore) ClaimNext(workerID string) (*job.Job, error) {
 	return nil, errStoreFailure
 }
 
 func (failingStore) Complete(id string, status job.Status, stdout, stderr string, exitCode int) error {
 	return errStoreFailure
+}
+
+func (failingStore) RequeueRunning(workerID string) ([]*job.Job, error) {
+	return nil, errStoreFailure
 }

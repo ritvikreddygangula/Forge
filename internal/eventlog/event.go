@@ -12,6 +12,7 @@ const (
 	EventJobCreated   EventType = "job_created"
 	EventJobClaimed   EventType = "job_claimed"
 	EventJobCompleted EventType = "job_completed"
+	EventJobRequeued  EventType = "job_requeued"
 )
 
 // Event is the durable, replayable record of one job-state transition.
@@ -26,6 +27,9 @@ type Event struct {
 	Image          string   `json:"image,omitempty"`
 	Command        []string `json:"command,omitempty"`
 	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+
+	// job_claimed field
+	WorkerID string `json:"worker_id,omitempty"`
 
 	// job_completed fields
 	Status   job.Status `json:"status,omitempty"`
@@ -61,6 +65,7 @@ func Rebuild(events []Event) []*job.Job {
 		case EventJobClaimed:
 			if j, ok := jobs[e.JobID]; ok {
 				j.Status = job.StatusRunning
+				j.WorkerID = e.WorkerID
 				j.UpdatedAt = e.Timestamp
 			}
 		case EventJobCompleted:
@@ -69,6 +74,12 @@ func Rebuild(events []Event) []*job.Job {
 				j.Stdout = e.Stdout
 				j.Stderr = e.Stderr
 				j.ExitCode = e.ExitCode
+				j.UpdatedAt = e.Timestamp
+			}
+		case EventJobRequeued:
+			if j, ok := jobs[e.JobID]; ok {
+				j.Status = job.StatusQueued
+				j.WorkerID = ""
 				j.UpdatedAt = e.Timestamp
 			}
 		}
@@ -93,8 +104,10 @@ func ApplyEvent(store *job.MemoryStore, e Event) {
 			Status: job.StatusQueued, CreatedAt: e.Timestamp, UpdatedAt: e.Timestamp,
 		})
 	case EventJobClaimed:
-		store.ApplyClaimed(e.JobID, e.Timestamp)
+		store.ApplyClaimed(e.JobID, e.WorkerID, e.Timestamp)
 	case EventJobCompleted:
 		store.ApplyCompleted(e.JobID, e.Status, e.Stdout, e.Stderr, e.ExitCode, e.Timestamp)
+	case EventJobRequeued:
+		store.ApplyRequeued(e.JobID, e.Timestamp)
 	}
 }

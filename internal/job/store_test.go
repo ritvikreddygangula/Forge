@@ -42,7 +42,7 @@ func TestMemoryStore_ClaimNext_FIFO(t *testing.T) {
 		t.Fatalf("Create returned error: %v", err)
 	}
 
-	claimed, err := s.ClaimNext()
+	claimed, err := s.ClaimNext("worker-1")
 	if err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
@@ -57,9 +57,23 @@ func TestMemoryStore_ClaimNext_FIFO(t *testing.T) {
 	}
 }
 
+func TestMemoryStore_ClaimNext_RecordsWorkerID(t *testing.T) {
+	s := job.NewMemoryStore()
+	if _, err := s.Create("alpine", []string{"true"}, 10); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	claimed, err := s.ClaimNext("worker-1")
+	if err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if claimed.WorkerID != "worker-1" {
+		t.Fatalf("expected worker ID worker-1, got %q", claimed.WorkerID)
+	}
+}
+
 func TestMemoryStore_ClaimNext_EmptyQueue(t *testing.T) {
 	s := job.NewMemoryStore()
-	claimed, err := s.ClaimNext()
+	claimed, err := s.ClaimNext("worker-1")
 	if err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
@@ -71,7 +85,7 @@ func TestMemoryStore_ClaimNext_EmptyQueue(t *testing.T) {
 func TestMemoryStore_Complete(t *testing.T) {
 	s := job.NewMemoryStore()
 	j, _ := s.Create("alpine", []string{"true"}, 10)
-	if _, err := s.ClaimNext(); err != nil {
+	if _, err := s.ClaimNext("worker-1"); err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
 
@@ -107,7 +121,7 @@ func TestMemoryStore_ClaimNext_ConcurrentClaimsAreUnique(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			j, err := s.ClaimNext()
+			j, err := s.ClaimNext("worker-1")
 			if err != nil {
 				t.Errorf("ClaimNext returned error: %v", err)
 				return
@@ -163,7 +177,7 @@ func TestMemoryStore_Rebuild(t *testing.T) {
 	}
 
 	// Only the still-queued job should be claimable — b is already terminal.
-	claimed, err := s.ClaimNext()
+	claimed, err := s.ClaimNext("worker-1")
 	if err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
@@ -184,7 +198,7 @@ func TestMemoryStore_ApplyCreated(t *testing.T) {
 	if got.Status != job.StatusQueued {
 		t.Fatalf("expected status queued, got %s", got.Status)
 	}
-	claimed, err := s.ClaimNext()
+	claimed, err := s.ClaimNext("worker-1")
 	if err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
@@ -197,7 +211,7 @@ func TestMemoryStore_ApplyCreated_IgnoresDuplicates(t *testing.T) {
 	s := job.NewMemoryStore()
 	now := time.Now()
 	s.ApplyCreated(&job.Job{ID: "a", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now})
-	if _, err := s.ClaimNext(); err != nil {
+	if _, err := s.ClaimNext("worker-1"); err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
 	if err := s.Complete("a", job.StatusSucceeded, "done\n", "", 0); err != nil {
@@ -223,14 +237,14 @@ func TestMemoryStore_ApplyClaimed(t *testing.T) {
 	now := time.Now()
 	s.ApplyCreated(&job.Job{ID: "a", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now})
 
-	s.ApplyClaimed("a", now)
+	s.ApplyClaimed("a", "worker-1", now)
 
 	got, err := s.Get("a")
 	if err != nil {
 		t.Fatalf("Get returned error: %v", err)
 	}
-	if got.Status != job.StatusRunning {
-		t.Fatalf("expected status running, got %s", got.Status)
+	if got.Status != job.StatusRunning || got.WorkerID != "worker-1" {
+		t.Fatalf("expected status running with worker worker-1, got %+v", got)
 	}
 }
 
@@ -238,7 +252,7 @@ func TestMemoryStore_ApplyCompleted(t *testing.T) {
 	s := job.NewMemoryStore()
 	now := time.Now()
 	s.ApplyCreated(&job.Job{ID: "a", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now})
-	s.ApplyClaimed("a", now)
+	s.ApplyClaimed("a", "worker-1", now)
 
 	s.ApplyCompleted("a", job.StatusFailed, "", "boom\n", 1, now)
 
@@ -248,6 +262,90 @@ func TestMemoryStore_ApplyCompleted(t *testing.T) {
 	}
 	if got.Status != job.StatusFailed || got.Stderr != "boom\n" || got.ExitCode != 1 {
 		t.Fatalf("expected failed job with stderr boom, got %+v", got)
+	}
+}
+
+func TestMemoryStore_ApplyRequeued(t *testing.T) {
+	s := job.NewMemoryStore()
+	now := time.Now()
+	s.ApplyCreated(&job.Job{ID: "a", Status: job.StatusQueued, CreatedAt: now, UpdatedAt: now})
+	s.ApplyClaimed("a", "worker-1", now)
+
+	s.ApplyRequeued("a", now)
+
+	got, err := s.Get("a")
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusQueued || got.WorkerID != "" {
+		t.Fatalf("expected queued with no worker, got %+v", got)
+	}
+	claimed, err := s.ClaimNext("worker-2")
+	if err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if claimed == nil || claimed.ID != "a" {
+		t.Fatalf("expected the requeued job to be claimable, got %+v", claimed)
+	}
+}
+
+func TestMemoryStore_RequeueRunning(t *testing.T) {
+	s := job.NewMemoryStore()
+	created, _ := s.Create("alpine", []string{"true"}, 10)
+	if _, err := s.ClaimNext("worker-1"); err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+
+	requeued, err := s.RequeueRunning("worker-1")
+	if err != nil {
+		t.Fatalf("RequeueRunning returned error: %v", err)
+	}
+	if len(requeued) != 1 || requeued[0].ID != created.ID {
+		t.Fatalf("expected job %s requeued, got %+v", created.ID, requeued)
+	}
+
+	got, err := s.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusQueued || got.WorkerID != "" {
+		t.Fatalf("expected job back to queued with no worker, got %+v", got)
+	}
+
+	claimed, err := s.ClaimNext("worker-2")
+	if err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if claimed == nil || claimed.ID != created.ID {
+		t.Fatalf("expected the requeued job to be claimable, got %+v", claimed)
+	}
+}
+
+func TestMemoryStore_RequeueRunning_IgnoresOtherWorkersAndTerminalJobs(t *testing.T) {
+	s := job.NewMemoryStore()
+	a, _ := s.Create("alpine", []string{"true"}, 10)
+	b, _ := s.Create("alpine", []string{"true"}, 10)
+	if _, err := s.ClaimNext("worker-1"); err != nil { // claims a
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if _, err := s.ClaimNext("worker-2"); err != nil { // claims b
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if err := s.Complete(a.ID, job.StatusSucceeded, "ok\n", "", 0); err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+
+	requeued, err := s.RequeueRunning("worker-1")
+	if err != nil {
+		t.Fatalf("RequeueRunning returned error: %v", err)
+	}
+	if len(requeued) != 0 {
+		t.Fatalf("expected nothing requeued (a is terminal, b belongs to worker-2), got %+v", requeued)
+	}
+
+	got, _ := s.Get(b.ID)
+	if got.Status != job.StatusRunning {
+		t.Fatalf("expected worker-2's job untouched, got %+v", got)
 	}
 }
 
@@ -262,7 +360,7 @@ func TestMemoryStore_Rebuild_ClearsPriorState(t *testing.T) {
 	if _, err := s.Get("only-this-one"); err != nil {
 		t.Fatalf("expected rebuilt job to exist: %v", err)
 	}
-	claimed, err := s.ClaimNext()
+	claimed, err := s.ClaimNext("worker-1")
 	if err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}

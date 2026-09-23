@@ -17,6 +17,7 @@ type Job struct {
 	Command        []string
 	TimeoutSeconds int
 	Status         Status
+	WorkerID       string // which worker holds/held this job; empty until claimed
 	Stdout         string
 	Stderr         string
 	ExitCode       int

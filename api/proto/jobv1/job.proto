@@ -14,7 +14,10 @@ service JobService {
   rpc StreamLogs(StreamLogsRequest) returns (stream LogChunk);
 }
 
-message PollJobRequest {}
+message PollJobRequest {
+  // Every poll doubles as a heartbeat — no separate heartbeat RPC exists.
+  string worker_id = 1;
+}
 
 message PollJobResponse {
   // Unset (nil) when the queue is empty — callers must check has_job.

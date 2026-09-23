@@ -22,7 +22,9 @@ const (
 )
 
 type PollJobRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Every poll doubles as a heartbeat — no separate heartbeat RPC exists.
+	WorkerId      string `protobuf:"bytes,1,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -55,6 +57,13 @@ func (x *PollJobRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use PollJobRequest.ProtoReflect.Descriptor instead.
 func (*PollJobRequest) Descriptor() ([]byte, []int) {
 	return file_jobv1_job_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *PollJobRequest) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
 }
 
 type PollJobResponse struct {
@@ -390,8 +399,9 @@ var File_jobv1_job_proto protoreflect.FileDescriptor
 
 const file_jobv1_job_proto_rawDesc = "" +
 	"\n" +
-	"\x0fjobv1/job.proto\x12\fforge.job.v1\"\x10\n" +
-	"\x0ePollJobRequest\"O\n" +
+	"\x0fjobv1/job.proto\x12\fforge.job.v1\"-\n" +
+	"\x0ePollJobRequest\x12\x1b\n" +
+	"\tworker_id\x18\x01 \x01(\tR\bworkerId\"O\n" +
 	"\x0fPollJobResponse\x12\x17\n" +
 	"\ahas_job\x18\x01 \x01(\bR\x06hasJob\x12#\n" +
 	"\x03job\x18\x02 \x01(\v2\x11.forge.job.v1.JobR\x03job\"n\n" +

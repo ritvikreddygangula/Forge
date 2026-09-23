@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -15,6 +16,7 @@ import (
 )
 
 type Loop struct {
+	ID           string // sent on every poll; every poll doubles as a heartbeat
 	client       jobv1.JobServiceClient
 	conn         *grpc.ClientConn
 	PollInterval time.Duration
@@ -45,6 +47,7 @@ func NewLoopWithDialer(dialer func(context.Context, string) (net.Conn, error)) (
 
 func newLoop(conn *grpc.ClientConn) *Loop {
 	return &Loop{
+		ID:           uuid.NewString(),
 		client:       jobv1.NewJobServiceClient(conn),
 		conn:         conn,
 		PollInterval: 2 * time.Second,
@@ -55,7 +58,7 @@ func newLoop(conn *grpc.ClientConn) *Loop {
 func (l *Loop) Close() error { return l.conn.Close() }
 
 func (l *Loop) RunOnce(ctx context.Context) error {
-	resp, err := l.client.PollJob(ctx, &jobv1.PollJobRequest{})
+	resp, err := l.client.PollJob(ctx, &jobv1.PollJobRequest{WorkerId: l.ID})
 	if err != nil {
 		return fmt.Errorf("poll failed: %w", err)
 	}

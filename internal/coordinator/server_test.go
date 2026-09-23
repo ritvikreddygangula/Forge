@@ -213,7 +213,7 @@ func TestHandleGetJobLogs_StoreError(t *testing.T) {
 func TestHandleGetJobLogs(t *testing.T) {
 	store := job.NewMemoryStore()
 	created, _ := store.Create("alpine", []string{"true"}, 10)
-	if _, err := store.ClaimNext(); err != nil {
+	if _, err := store.ClaimNext("worker-1"); err != nil {
 		t.Fatalf("ClaimNext returned error: %v", err)
 	}
 	if err := store.Complete(created.ID, job.StatusSucceeded, "hello\n", "", 0); err != nil {
