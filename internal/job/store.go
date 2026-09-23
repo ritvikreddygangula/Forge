@@ -9,6 +9,7 @@ import (
 )
 
 var ErrNotFound = errors.New("job not found")
+var ErrNotCancellable = errors.New("job is not cancellable (already running or terminal)")
 
 type Store interface {
 	Create(image string, command []string, timeoutSeconds int) (*Job, error)
@@ -16,6 +17,7 @@ type Store interface {
 	ClaimNext(workerID string) (*Job, error)
 	Complete(id string, status Status, stdout, stderr string, exitCode int) error
 	RequeueRunning(workerID string) ([]*Job, error)
+	Cancel(id string) (*Job, error)
 }
 
 type MemoryStore struct {
@@ -155,6 +157,27 @@ func (s *MemoryStore) ApplyRequeued(id string, at time.Time) {
 	s.order = append(s.order, id)
 }
 
+// ApplyCancelled marks a specific job cancelled. Same replication role as
+// ApplyRequeued — a no-op if the job is unknown or no longer queued, so
+// replaying an already-applied (or superseded) event is harmless.
+func (s *MemoryStore) ApplyCancelled(id string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	j, ok := s.jobs[id]
+	if !ok || j.Status != StatusQueued {
+		return
+	}
+	j.Status = StatusCancelled
+	j.UpdatedAt = at
+	for i, oid := range s.order {
+		if oid == id {
+			s.order = append(s.order[:i], s.order[i+1:]...)
+			break
+		}
+	}
+}
+
 // ApplyCompleted marks a specific job terminal. Same replication role as
 // ApplyClaimed, for the completed transition.
 func (s *MemoryStore) ApplyCompleted(id string, status Status, stdout, stderr string, exitCode int, at time.Time) {
@@ -205,4 +228,35 @@ func (s *MemoryStore) Complete(id string, status Status, stdout, stderr string, 
 	j.ExitCode = exitCode
 	j.UpdatedAt = time.Now()
 	return nil
+}
+
+// Cancel only succeeds while a job is still Queued — a job already claimed
+// by a worker can't be stopped mid-execution under this project's pull-based
+// model (see docs/plans/part-6-rest-mcp.md for why that's a stated scope
+// decision, not a missing feature). Removing it from s.order here is what
+// stops a later ClaimNext from ever handing it to a worker — the job stays
+// in s.jobs (so Get still finds it, now Cancelled), just no longer queued.
+func (s *MemoryStore) Cancel(id string) (*Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	j, ok := s.jobs[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if j.Status != StatusQueued {
+		return nil, ErrNotCancellable
+	}
+	j.Status = StatusCancelled
+	j.UpdatedAt = time.Now()
+
+	for i, oid := range s.order {
+		if oid == id {
+			s.order = append(s.order[:i], s.order[i+1:]...)
+			break
+		}
+	}
+
+	cp := *j
+	return &cp, nil
 }

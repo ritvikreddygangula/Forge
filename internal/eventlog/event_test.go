@@ -98,3 +98,30 @@ func TestApplyEvent_Requeued(t *testing.T) {
 		t.Fatalf("expected queued with no worker, got %+v", got)
 	}
 }
+
+func TestRebuild_CancelledJobStaysCancelled(t *testing.T) {
+	now := time.Now()
+	jobs := eventlog.Rebuild([]eventlog.Event{
+		{Type: eventlog.EventJobCreated, JobID: "a", Timestamp: now},
+		{Type: eventlog.EventJobCancelled, JobID: "a", Timestamp: now},
+	})
+	if len(jobs) != 1 || jobs[0].Status != job.StatusCancelled {
+		t.Fatalf("expected cancelled job, got %+v", jobs)
+	}
+}
+
+func TestApplyEvent_Cancelled(t *testing.T) {
+	store := job.NewMemoryStore()
+	now := time.Now()
+
+	eventlog.ApplyEvent(store, eventlog.Event{Type: eventlog.EventJobCreated, JobID: "a", Timestamp: now})
+	eventlog.ApplyEvent(store, eventlog.Event{Type: eventlog.EventJobCancelled, JobID: "a", Timestamp: now})
+
+	got, err := store.Get("a")
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusCancelled {
+		t.Fatalf("expected cancelled, got %+v", got)
+	}
+}

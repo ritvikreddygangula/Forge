@@ -72,6 +72,24 @@ func (s *Store) RequeueRunning(workerID string) ([]*job.Job, error) {
 	return requeued, nil
 }
 
+// Cancel rejects (no publish) if the inner store rejects it — a running or
+// terminal job's rejection is a pure read from the caller's perspective, not
+// a state transition, so nothing goes on the event log for it. Same
+// apply-then-publish limitation as every other mutation here for the
+// success path.
+func (s *Store) Cancel(id string) (*job.Job, error) {
+	j, err := s.inner.Cancel(id)
+	if err != nil {
+		return nil, err
+	}
+	if pubErr := s.producer.Publish(context.Background(), Event{
+		Type: EventJobCancelled, JobID: id, Timestamp: time.Now(),
+	}); pubErr != nil {
+		return j, fmt.Errorf("job cancelled locally but failed to publish: %w", pubErr)
+	}
+	return j, nil
+}
+
 func (s *Store) Complete(id string, status job.Status, stdout, stderr string, exitCode int) error {
 	if err := s.inner.Complete(id, status, stdout, stderr, exitCode); err != nil {
 		return err

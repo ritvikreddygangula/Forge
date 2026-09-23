@@ -2,6 +2,7 @@ package eventlog_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/ritvikreddygangula/forge/internal/eventlog"
@@ -108,6 +109,48 @@ func TestEventlogStore_Complete_PublishesJobCompleted(t *testing.T) {
 	}
 	if fake.events[0].Stdout != "ok\n" {
 		t.Fatalf("expected stdout ok in event, got %q", fake.events[0].Stdout)
+	}
+}
+
+func TestEventlogStore_Cancel_PublishesJobCancelled(t *testing.T) {
+	fake := &fakeProducer{}
+	base := job.NewMemoryStore()
+	s := eventlog.NewStore(base, fake)
+	created, err := base.Create("alpine", []string{"true"}, 10)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	got, err := s.Cancel(created.ID)
+	if err != nil {
+		t.Fatalf("Cancel returned error: %v", err)
+	}
+	if got.Status != job.StatusCancelled {
+		t.Fatalf("expected cancelled, got %+v", got)
+	}
+	if len(fake.events) != 1 || fake.events[0].Type != eventlog.EventJobCancelled {
+		t.Fatalf("expected one job_cancelled event, got %+v", fake.events)
+	}
+}
+
+func TestEventlogStore_Cancel_RunningJobReturnsErrorAndPublishesNothing(t *testing.T) {
+	fake := &fakeProducer{}
+	base := job.NewMemoryStore()
+	s := eventlog.NewStore(base, fake)
+	created, err := base.Create("alpine", []string{"true"}, 10)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := base.ClaimNext("worker-1"); err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+
+	_, err = s.Cancel(created.ID)
+	if !errors.Is(err, job.ErrNotCancellable) {
+		t.Fatalf("expected ErrNotCancellable, got %v", err)
+	}
+	if len(fake.events) != 0 {
+		t.Fatalf("expected no events published for a rejected cancel, got %+v", fake.events)
 	}
 }
 
