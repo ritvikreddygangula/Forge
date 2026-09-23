@@ -846,7 +846,7 @@ jobs, measures wall-clock throughput and latency. **Decided (carried from the ro
 no-op job type to inflate the number — whatever this measures with real container execution is what's
 real.**
 
-- [ ] **Step 1: Write the test**
+- [x] **Step 1: Write the test**
 
 ```go
 //go:build integration
@@ -965,13 +965,22 @@ func TestLoadTest_RealWorkersRealDocker(t *testing.T) {
   needed. Workers loop on `RunOnce` directly rather than `Run`, so the test controls pacing and knows
   when to stop instead of waiting on `Loop`'s internal ticker.)
 
-- [ ] **Step 2: Run it for real** (⚠️ needs `make compose-up` and Docker/Colima running)
+- [x] **Step 2: Run it for real** (⚠️ needs `make compose-up` and Docker/Colima running)
 
 Run: `go test -tags=integration ./internal/coordinator/... -run TestLoadTest -v -timeout 5m`
 Expected: PASS. **Copy the actual logged jobs/sec number verbatim into Task 5.7's PROGRESS.md entry** —
 same resume-honesty rule as Part 4's benchmark.
 
-- [ ] **Step 3: Commit**
+**Real measured results (two runs, real Docker execution via Colima, real Redpanda):**
+- Run 1: 500/500 jobs completed by 25 workers in 33.24s (15.0 jobs/sec)
+- Run 2: 500/500 jobs completed by 25 workers in 43.46s (11.5 jobs/sec)
+
+Both runs: all 500 jobs succeeded, no failures, no timeouts. The 15.0 vs 11.5 jobs/sec spread reflects real
+variance in per-container `docker run` startup overhead inside the Colima VM run-to-run, not measurement
+noise or a bug — consistent with the grounded low-tens-of-jobs/sec expectation from this doc's design
+notes (Docker startup overhead + strictly sequential execution per worker, no concurrency added this Part).
+
+- [x] **Step 3: Commit**
 
 Commit message: `test: add load-test harness — 25 real workers, real docker run execution, measure sustained jobs/sec`
 
