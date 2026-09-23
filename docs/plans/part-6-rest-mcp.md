@@ -873,12 +873,12 @@ verified non-vacuous by temporarily swallowing `Cancel`'s error and confirming t
 **Files:** `internal/coordinator/integration_test.go` (extend) or a new
 `internal/mcpserver/integration_test.go`.
 
-- [ ] **Step 1:** One end-to-end test per surface: submit → get status → (for REST) stream logs → cancel
+- [x] **Step 1:** One end-to-end test per surface: submit → get status → (for REST) stream logs → cancel
   a second queued job, asserting each step's real response, against a real `job.Store` (in-memory, no
   Docker needed — this is about the surface/wiring, not execution, same reasoning as
   `TestEndToEnd_SubmitPollExecuteReport` from Part 2).
 
-- [ ] **Step 2: Run, verify, commit**
+- [x] **Step 2: Run, verify, commit**
 
 Run: `go test ./... -v`
 
