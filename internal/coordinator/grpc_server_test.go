@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -104,6 +105,86 @@ func TestGRPC_ReportResult_NotFound(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected an error for an unknown job id, got nil")
+	}
+}
+
+// TestGRPC_PollJob_ForwardsToLeaderWhenNotLeader uses a real 2-node
+// in-memory raft cluster plus real TCP-backed gRPC servers — no mocked raft,
+// no mocked gRPC. Polls against whichever node is NOT the leader and proves
+// the leader's queued job gets claimed via forwarding, not fabricated
+// locally by the follower.
+func TestGRPC_PollJob_ForwardsToLeaderWhenNotLeader(t *testing.T) {
+	nodes := newInMemRaftCluster(t, 2)
+	t.Cleanup(func() {
+		for _, n := range nodes {
+			_ = n.raft.Shutdown()
+		}
+	})
+	leader := waitForLeader(t, nodes, 2*time.Second)
+
+	type nodeServer struct {
+		store   *job.MemoryStore
+		grpcSrv *coordinator.GRPCServer
+		addr    string
+	}
+	servers := make(map[string]*nodeServer, len(nodes))
+	peers := make([]coordinator.PeerInfo, 0, len(nodes))
+	for _, n := range nodes {
+		store := job.NewMemoryStore()
+		grpcServer := coordinator.NewGRPCServer(store)
+		lis, err := net.Listen("tcp", "localhost:0")
+		if err != nil {
+			t.Fatalf("failed to listen: %v", err)
+		}
+		s := grpc.NewServer()
+		jobv1.RegisterJobServiceServer(s, grpcServer)
+		go func() { _ = s.Serve(lis) }()
+		t.Cleanup(s.Stop)
+
+		servers[n.id] = &nodeServer{store: store, grpcSrv: grpcServer, addr: lis.Addr().String()}
+		peers = append(peers, coordinator.PeerInfo{
+			ID:       n.id,
+			RaftAddr: string(n.transport.LocalAddr()),
+			GRPCAddr: lis.Addr().String(),
+		})
+	}
+	for _, n := range nodes {
+		servers[n.id].grpcSrv.SetRaftGate(coordinator.NewRaftGate(n.raft, peers))
+	}
+
+	created, err := servers[leader.id].store.Create("alpine", []string{"true"}, 10)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	var followerID string
+	for _, n := range nodes {
+		if n.id != leader.id {
+			followerID = n.id
+		}
+	}
+
+	conn, err := grpc.NewClient(servers[followerID].addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("failed to dial follower: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	client := jobv1.NewJobServiceClient(conn)
+
+	resp, err := client.PollJob(context.Background(), &jobv1.PollJobRequest{})
+	if err != nil {
+		t.Fatalf("PollJob returned error: %v", err)
+	}
+	if !resp.HasJob || resp.Job.Id != created.ID {
+		t.Fatalf("expected to poll the leader's queued job %s, got %+v", created.ID, resp)
+	}
+
+	got, err := servers[leader.id].store.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusRunning {
+		t.Fatalf("expected leader's job to be running after forwarded claim, got %s", got.Status)
 	}
 }
 

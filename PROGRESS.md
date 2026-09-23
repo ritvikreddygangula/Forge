@@ -88,5 +88,37 @@ coordinator binary — submitted and completed a real job, killed the process ou
 new one against the same Redpanda broker, got `jobs_restored=1` and the exact same job status/stdout
 back with zero in-process continuity between the two coordinator instances.
 
+## Part 4 — Three-coordinator Raft cluster → `part-4-raft`
+- `docs: add Part 4 raft implementation plan` — design verified against a real `hashicorp/raft` (v1.8.0) 3-node in-memory cluster during planning: measured 77-132ms re-election with tuned 50ms timeouts vs. 1.1-2.4s on library defaults.
+- `feat(job,eventlog): add incremental apply methods for continuous replication` — `MemoryStore.ApplyCreated/ApplyClaimed/ApplyCompleted` + `eventlog.ApplyEvent`, the incremental counterparts to Part 3's bulk `Rebuild`, needed so every replica can keep applying new events as they arrive, not just once at startup.
+- `feat(coordinator): embed hashicorp/raft with single-node bootstrap` — `NewRaftNode` with a deliberate no-op FSM (raft here is leader election only, not data replication — job state stays durable via the Redpanda log every replica tails); this commit's test already covers the roadmap's separate "failover test" item, logging real measured re-election times.
+- `feat(eventlog): add continuous tail for multi-replica replication` — `ReadAll` now also returns an offset; new `Tail(ctx, fromOffset, onEvent)` runs indefinitely so every replica stays in sync with whichever replica is currently leader.
+- `feat(coordinator): add three-replica config and TCP raft transport` — `deploy/raft-cluster.json`, real TCP raft transport, `cmd/coordinator/main.go` wired for cluster mode (opt-in via `COORDINATOR_REPLICA_ID`; unset, single-instance mode from Parts 1-3 is untouched).
+- `feat(coordinator): gate job-assignment writes behind leader check, forward writes to leader` — `RaftGate`; REST/gRPC write handlers forward to whoever raft says is leader, reads stay ungated (eventually consistent across replicas, documented not hidden).
+- `feat(coordinator): persist raft log/snapshot to a volume` — `raft-boltdb/v2` for log/stable storage, `raft.NewFileSnapshotStore` for snapshots, one `data/<replica-id>/raft/` directory per replica. Go bumped 1.25→1.26 (raft-boltdb's genuine minimum).
+- `test: add network-partition fault injection (isolate leader from followers, assert majority partition elects a new leader and the minority side does not)` — 10/10 repeated runs, 65-132ms re-election.
+- `test: add failover benchmark harness — run N repeated leader-kill trials, record failover latency per trial, report median/p99` — **real measured result: 30 trials, median 106ms, p99 136ms, min 59ms, max 136ms, 30/30 under the 500ms target.** Re-run for sanity: 108ms/161ms that run — consistent, both comfortably under target.
+- `docs: update PROGRESS.md for Part 4 with real benchmark results` — this entry; README's "Running a 3-replica cluster" section.
+
+**A three-day-old zombie process caused most of the debugging pain in this Part, not a code bug.** While
+verifying the leader-forwarding logic (Task 4.3), jobs submitted through a follower sometimes silently
+vanished — forwarded, seemingly accepted, but absent from the leader's store moments later. Chased it
+through several real (and ultimately unrelated) fixes — `Tail` swallowing transient errors silently,
+`kafka.Writer`'s connection pooling getting stuck, `kafka.Reader`'s `MaxWait`/`Transport.MetadataTTL`
+defaults, a genuine port collision in `deploy/raft-cluster.json` (node3's gRPC port originally clashed
+with Redpanda's own 9092) — all real, all fixed, none of them the actual cause. The actual cause: a
+`go build` temp binary from the very first "Part 0-1" session on **September 19th**, three days earlier,
+still running the ancient pre-gRPC coordinator, bound to port 8080 via an IPv6 wildcard that coexisted
+with the real test processes' IPv4-specific bindings — so requests randomly landed on a three-day-old
+zombie with a completely disconnected in-memory store. Found via `lsof -i` per port, killed both it and
+a matching zombie worker process, and every remaining "bug" evaporated. Lesson: when local manual testing
+gets inexplicably inconsistent, check `lsof -i` for surprise listeners before trusting the code is wrong.
+
+**Leader failover and forwarding verified for real, repeatedly:** a 10-trial stress test killing and
+restarting all 3 real coordinator processes, always submitting through whichever replica was a follower
+that trial — 10/10 clean, with leadership genuinely rotating across all 3 nodes. Also verified raft state
+survives a full restart of all 3 processes (no re-bootstrap, `ErrCantBootstrap` correctly recognized as
+"already initialized" rather than an error).
+
 ## Next
-Branch 4 (`part-4-raft`) — not started yet.
+Branch 5 (`part-5-scheduling`) — not started yet.

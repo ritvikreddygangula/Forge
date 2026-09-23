@@ -1,9 +1,11 @@
 package coordinator
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -12,8 +14,9 @@ import (
 )
 
 type Server struct {
-	store job.Store
-	mux   *http.ServeMux
+	store    job.Store
+	mux      *http.ServeMux
+	raftGate *RaftGate // nil in single-node mode; see raft.go
 }
 
 func NewServer(store job.Store) *Server {
@@ -21,6 +24,12 @@ func NewServer(store job.Store) *Server {
 	s.routes()
 	return s
 }
+
+// SetRaftGate wires this replica's leader-election state into the server.
+// Called only when running as part of a raft cluster (Task 4.2c); a Server
+// with no gate set behaves exactly as it did before this Part — every write
+// handler treats a nil gate as "always leader."
+func (s *Server) SetRaftGate(g *RaftGate) { s.raftGate = g }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
@@ -63,6 +72,11 @@ func toJobResponse(j *job.Job) jobResponse {
 }
 
 func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
+	if !s.raftGate.IsLeader() {
+		s.forwardToLeader(w, r)
+		return
+	}
+
 	var req submitJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
@@ -82,6 +96,7 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 
 	j, err := s.store.Create(req.Image, req.Command, req.TimeoutSeconds)
 	if err != nil {
+		slog.Error("failed to create job", "error", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}
@@ -93,6 +108,49 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// forwardToLeader proxies a write request to whichever replica raft says is
+// currently leader. Used when this replica isn't it — the caller (an
+// external client or a worker) never needs to know or care which of the 3
+// REST ports is actually the leader at any given moment.
+func (s *Server) forwardToLeader(w http.ResponseWriter, r *http.Request) {
+	leader, ok := s.raftGate.Leader()
+	if !ok {
+		http.Error(w, "no raft leader elected, try again shortly", http.StatusServiceUnavailable)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusInternalServerError)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, "http://"+leader.RESTAddr+r.URL.Path, bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, "failed to build forwarded request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "failed to forward request to leader", http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		slog.Error("failed to copy forwarded response body", "error", err)
+	}
+}
+
+// handleGetJob and handleGetJobLogs below are deliberately NOT leader-gated
+// — any replica serves reads from its own local, eventually-consistent copy
+// (kept in sync by the continuous event-log tail). A client that just wrote
+// via one replica and immediately reads via another may briefly see stale
+// data until that replica's tail loop catches up — not read-your-writes
+// consistent across replicas, documented here rather than hidden.
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	j, err := s.store.Get(id)

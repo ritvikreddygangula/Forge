@@ -40,7 +40,7 @@ func TestKafka_PublishAndReadAll_RoundTrip(t *testing.T) {
 		t.Fatalf("Publish returned error: %v", err)
 	}
 
-	events, err := eventlog.NewKafkaConsumer(brokers, topic).ReadAll(ctx)
+	events, _, err := eventlog.NewKafkaConsumer(brokers, topic).ReadAll(ctx)
 	if err != nil {
 		t.Fatalf("ReadAll returned error: %v", err)
 	}
