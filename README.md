@@ -72,6 +72,16 @@ Within ~2 seconds, you should see `"status":"succeeded"` in the response, along 
 
 Note: the first run will also pull the `alpine:3.19` image, which can take longer than the timeout below allows — for a fresh machine, consider a higher `timeout_seconds` on the first try.
 
+### Running multiple workers
+
+Just run `make run-worker` again in another terminal — each worker generates its own random ID on
+startup, so there's no config file to edit and no coordination needed, unlike the raft cluster's static
+`deploy/raft-cluster.json` below. The coordinator hands out jobs to whichever worker polls next (a simple
+pull-based scheduler — a worker only asks for more work once it's idle), and if a worker stops polling
+mid-job (crash, `kill -9`, network partition), the coordinator notices within a few seconds and reassigns
+its in-flight job to another worker. See `docs/plans/part-5-scheduling.md` for how that failure detection
+works and `PROGRESS.md` for real measured throughput with 25 concurrent workers.
+
 ### Crash recovery
 
 Every job-state transition is durably logged to Redpanda, not just held in memory — so killing the

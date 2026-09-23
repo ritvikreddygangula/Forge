@@ -120,5 +120,37 @@ that trial — 10/10 clean, with leadership genuinely rotating across all 3 node
 survives a full restart of all 3 processes (no re-bootstrap, `ErrCantBootstrap` correctly recognized as
 "already initialized" rather than an error).
 
+## Part 5 — Multi-worker scheduling with heartbeat failure detection → `part-5-scheduling`
+- `docs: add Part 5 scheduling implementation plan` — worker identity, `WorkerRegistry`, `Reaper`, a real multi-worker scheduling/failure test, and a real load test, planned before code. Key design call: "least-loaded" scheduling falls out for free from the existing pull-model (a worker only polls when idle, since a poll blocks on execution) — no scheduling algorithm needed this Part.
+- `feat: add worker identity to poll requests` — `PollJobRequest.worker_id`, `Job.WorkerID`, `Store.ClaimNext(workerID)`; added as real groundwork not in the original roadmap list, same precedent as Part 4's Task 4.1.
+- `feat: track worker load via heartbeats` — `coordinator.WorkerRegistry` records last-heartbeat-per-worker; `DeadWorkers` never flags a worker it has no history for, protecting a freshly-elected raft leader (empty registry) from mass false-positive reassignment.
+- `test: add Rebuild/ApplyEvent coverage for job requeuing` — `EventJobRequeued`, `job.Store.RequeueRunning`; turned out mostly already implemented as a side effect of the worker-identity commit, just needed direct test coverage.
+- `feat: add heartbeat-timeout failure detection and reassignment` — `coordinator.Reaper`, leader-gated, wired into `cmd/coordinator/main.go` on a 2s tick with a 6s dead-worker timeout (3× the poll interval). **A real end-to-end smoke test (real compiled binaries, real Docker) caught a genuine bug before this shipped:** a job running longer than the dead-worker timeout made its own live, busy worker look dead and get falsely reaped mid-execution — because `Loop.RunOnce` blocks on `Execute` for the whole job, so a worker sends no heartbeat while a job is running. Fixed in the same commit by adding a real `Heartbeat` gRPC RPC that `Loop` calls on its own ticker from a goroutine alongside `Execute`, independent of polling. Re-verified with the same manual smoke test afterward: a `sleep 20` job stays alive past the old false-reap window with zero reap events logged, and killing a real worker mid-job still correctly triggers reassignment ~7s later.
+- `test: add multi-worker scheduling and failure-reassignment test` — two real `worker.Loop`s against one real coordinator (fake `Execute`, no Docker needed — this test is about scheduling, not execution): one worker claims a job and never reports back, the reaper reassigns it, a survivor claims and completes it. Added `Loop.PollOnce` as a small test seam (claim without execute/report) to simulate a crashed worker without a real hang.
+- `test: add load-test harness — 25 real workers, real docker run execution, measure sustained jobs/sec` — real coordinator (REST+gRPC, real Redpanda), 25 real `worker.Loop`s, real `docker run alpine:3.19 true` per job, 500 real jobs submitted up front. **No synthetic no-op job type used to inflate the number.**
+
+**Real measured load-test results (two runs, no invented numbers):**
+- Run 1: 500/500 jobs completed by 25 workers in 33.24s — **15.0 jobs/sec**
+- Run 2: 500/500 jobs completed by 25 workers in 43.46s — **11.5 jobs/sec**
+
+Both runs: 500/500 succeeded, zero failures, zero timeouts. The run-to-run spread is real `docker run`
+container-startup variance inside the Colima VM, not noise or a bug — and it lands exactly where the plan
+doc predicted before running it: low tens of jobs/sec given per-container Docker overhead and strictly
+sequential execution per worker (no per-worker concurrency added this Part — a deliberate, separate scope
+decision, not implied by "multiple workers").
+
+**A manual smoke test, not a unit test, found this Part's one real bug.** All four safety-critical unit
+tests (heartbeat recording, leader-gating, dead-worker detection, requeue-on-reap) passed from the start
+and were individually verified non-vacuous by deliberately breaking then restoring the implementation —
+standard practice all session. None of them caught the false-reap-of-a-live-worker bug, because no unit
+test exercised a job whose execution time actually exceeded the reap timeout; every unit test used an
+instantaneous fake `Execute`. Only running the real compiled coordinator and worker binaries against a
+real `sleep 30` Docker container, and watching wall-clock behavior, surfaced it. Lesson carried forward:
+timeout/liveness logic needs at least one test (even a manual one) where the timed thing actually takes
+longer than the timeout, not just a fake that returns instantly.
+
 ## Next
-Branch 5 (`part-5-scheduling`) — not started yet.
+Branch 5 is complete — this is the resume-done checkpoint (see `CLAUDE.md`). Branch 6 (REST/MCP polish +
+observability) is still real, valuable work, but everything that makes this a distributed-systems story
+rather than a CRUD app now exists and is proven: HTTP → gRPC → event log → Raft → scheduling, each with a
+real (not mocked) end-to-end verification. Not started yet.

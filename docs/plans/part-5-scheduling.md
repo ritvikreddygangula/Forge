@@ -990,19 +990,19 @@ Commit message: `test: add load-test harness — 25 real workers, real docker ru
 
 **Files:** Modify `README.md`, `PROGRESS.md`, `CLAUDE.md`.
 
-- [ ] **Step 1:** README: brief "Running multiple workers" note (just run `make run-worker` more than
+- [x] **Step 1:** README: brief "Running multiple workers" note (just run `make run-worker` more than
   once — each generates its own ID automatically, no config needed, unlike the raft cluster's static
   config file).
 
-- [ ] **Step 2:** `PROGRESS.md`: full Part 5 commit log, **plus the real load-test numbers from Task
+- [x] **Step 2:** `PROGRESS.md`: full Part 5 commit log, **plus the real load-test numbers from Task
   5.6 Step 2, copied verbatim** — worker count, job count, elapsed time, measured jobs/sec.
 
-- [ ] **Step 3:** `CLAUDE.md`: update the "Where things stand" section. Per the roadmap, **this is the
+- [x] **Step 3:** `CLAUDE.md`: update the "Where things stand" section. Per the roadmap, **this is the
   point the project counts as resume-done** — Branch 5 completing the full fault-tolerant core (HTTP →
   gRPC → event log → Raft → scheduling). Update the resume-done rule's wording if it still says "once
   Branch 5 lands" as a future thing rather than a completed fact.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Commit message: `docs: update PROGRESS.md for Part 5 with real load-test results`
 
