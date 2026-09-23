@@ -232,3 +232,81 @@ func TestHandleGetJobLogs(t *testing.T) {
 		t.Fatalf("expected logs to contain job stdout, got %q", rec.Body.String())
 	}
 }
+
+func TestDELETE_Jobs_CancelsQueuedJob(t *testing.T) {
+	store := job.NewMemoryStore()
+	created, _ := store.Create("alpine", []string{"true"}, 10)
+	srv := coordinator.NewServer(store)
+
+	req := httptest.NewRequest(http.MethodDelete, "/jobs/"+created.ID, nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := store.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.Status != job.StatusCancelled {
+		t.Fatalf("expected cancelled, got %+v", got)
+	}
+}
+
+func TestDELETE_Jobs_RunningJobReturns409(t *testing.T) {
+	store := job.NewMemoryStore()
+	created, _ := store.Create("alpine", []string{"true"}, 10)
+	if _, err := store.ClaimNext("worker-1"); err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	srv := coordinator.NewServer(store)
+
+	req := httptest.NewRequest(http.MethodDelete, "/jobs/"+created.ID, nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDELETE_Jobs_UnknownIDReturns404(t *testing.T) {
+	srv := coordinator.NewServer(job.NewMemoryStore())
+	req := httptest.NewRequest(http.MethodDelete, "/jobs/does-not-exist", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestGET_JobsLogsStream_SendsSSEChunks(t *testing.T) {
+	store := job.NewMemoryStore()
+	created, _ := store.Create("alpine", []string{"echo", "hi"}, 10)
+	if _, err := store.ClaimNext("worker-1"); err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if err := store.Complete(created.ID, job.StatusSucceeded, "out\n", "err\n", 0); err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+	srv := coordinator.NewServer(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs/"+created.ID+"/logs/stream", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: stdout") || !strings.Contains(body, "out\n") {
+		t.Fatalf("expected an stdout SSE event, got %q", body)
+	}
+	if !strings.Contains(body, "event: stderr") || !strings.Contains(body, "err\n") {
+		t.Fatalf("expected an stderr SSE event, got %q", body)
+	}
+}

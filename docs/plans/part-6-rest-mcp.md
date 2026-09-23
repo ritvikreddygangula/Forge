@@ -401,7 +401,7 @@ Commit message: (folded into Task 6.1's commit above — `feat(job,eventlog): ad
 
 **Files:** `internal/coordinator/server.go`, `internal/coordinator/server_test.go`.
 
-- [ ] **Step 1: Write failing tests** — append to `internal/coordinator/server_test.go`:
+- [x] **Step 1: Write failing tests** — append to `internal/coordinator/server_test.go`:
 
 ```go
 func TestDELETE_Jobs_CancelsQueuedJob(t *testing.T) {
@@ -483,7 +483,7 @@ func TestGET_JobsLogsStream_SendsSSEChunks(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure, then implement** — `internal/coordinator/server.go`:
+- [x] **Step 2: Run to verify failure, then implement** — `internal/coordinator/server.go`:
 
 ```go
 s.mux.HandleFunc("DELETE /jobs/{id}", s.handleCancelJob)
@@ -551,7 +551,7 @@ func (s *Server) handleStreamJobLogs(w http.ResponseWriter, r *http.Request) {
   (`httptest.NewRecorder()` implements `http.Flusher`, so the test above works without a real network
   connection.)
 
-- [ ] **Step 3: Run full suite, verify, commit**
+- [x] **Step 3: Run full suite, verify, commit**
 
 Run: `go build ./... && go test ./...`
 
