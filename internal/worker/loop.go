@@ -62,6 +62,13 @@ func newLoop(conn *grpc.ClientConn) *Loop {
 
 func (l *Loop) Close() error { return l.conn.Close() }
 
+// PollOnce claims at most one job without executing or reporting on it — the
+// test seam for simulating a worker that claims a job and then crashes
+// before ever finishing it, without needing a real hung Execute.
+func (l *Loop) PollOnce(ctx context.Context) (*jobv1.PollJobResponse, error) {
+	return l.client.PollJob(ctx, &jobv1.PollJobRequest{WorkerId: l.ID})
+}
+
 func (l *Loop) RunOnce(ctx context.Context) error {
 	resp, err := l.client.PollJob(ctx, &jobv1.PollJobRequest{WorkerId: l.ID})
 	if err != nil {

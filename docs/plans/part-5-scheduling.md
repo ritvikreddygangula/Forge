@@ -576,7 +576,7 @@ Commit message: `feat(job,eventlog): add job requeuing for worker-failure reassi
 **Interfaces:** Produces `coordinator.NewReaper(registry *WorkerRegistry, store job.Store, gate *RaftGate,
 timeout time.Duration) *Reaper`, `(*Reaper).Tick(now time.Time)`, `(*Reaper).Run(ctx, interval time.Duration)`.
 
-- [ ] **Step 1: Write the failing tests** — append to `internal/coordinator/workers_test.go`:
+- [x] **Step 1: Write the failing tests** — append to `internal/coordinator/workers_test.go`:
 
 ```go
 func TestReaper_Tick_RequeuesDeadWorkersJobs(t *testing.T) {
@@ -679,7 +679,7 @@ func (r *Reaper) Run(ctx context.Context, interval time.Duration) {
   Needs `context`, `log/slog`, `github.com/ritvikreddygangula/forge/internal/job` added to
   `workers.go`'s imports.
 
-- [ ] **Step 3: Wire into `cmd/coordinator/main.go`** — construct the registry, pass it to
+- [x] **Step 3: Wire into `cmd/coordinator/main.go`** — construct the registry, pass it to
   `GRPCServer.SetWorkerRegistry`, start the reaper:
 
 ```go
@@ -693,10 +693,10 @@ go reaper.Run(ctx, worker.DefaultPollInterval)
   reaping a worker that's just between two 2-second polls. `worker.DefaultPollInterval` is a small new
   exported constant — Step 4 below — so main.go and the worker binary can't drift apart on this number.)
 
-- [ ] **Step 4:** In `internal/worker/loop.go`, add `const DefaultPollInterval = 2 * time.Second` and use
+- [x] **Step 4:** In `internal/worker/loop.go`, add `const DefaultPollInterval = 2 * time.Second` and use
   it in `newLoop` instead of the current inline `2 * time.Second` literal.
 
-- [ ] **Step 5: Run tests, verify, commit**
+- [x] **Step 5: Run tests, verify, commit**
 
 Run: `go build ./... && go test ./... -v`
 
@@ -705,6 +705,12 @@ Commit message: `feat(coordinator): add heartbeat-timeout failure detection and 
 *(Combines the roadmap's separately-listed "heartbeat-timeout failure detection" and "reassign in-flight
 jobs from dead workers" items into one commit — in this design they're the same mechanism, not two
 separable pieces; noted here rather than forcing an artificial split.)*
+
+**Also folded into this commit after a manual smoke test caught a real bug:** see the "Revised after a
+manual smoke test" note under "Worker identity and heartbeat" above — a new `Heartbeat` gRPC RPC and
+`Loop.heartbeatWhileExecuting` were added so a worker executing a long job doesn't get falsely reaped
+mid-run. Not part of the original plan for this task; added because shipping the reaper without it would
+have shipped a known false-positive bug.
 
 ---
 
@@ -716,7 +722,7 @@ Proves the whole mechanism end-to-end at the coordinator level: two real `worker
 no real Docker needed here — this test is about scheduling/reassignment, not execution) against one real
 coordinator, kill one worker's polling, confirm its in-flight job gets reassigned to the survivor.
 
-- [ ] **Step 1: Write the test**
+- [x] **Step 1: Write the test**
 
 ```go
 package coordinator_test
@@ -816,14 +822,11 @@ func TestScheduling_ReassignsDeadWorkersJobToSurvivor(t *testing.T) {
 }
 ```
 
-  (`grpcServer_pollDirect` is a placeholder for "have `deadWorker` do exactly one poll-and-claim without
-  the rest of `RunOnce`'s execute/report" — during implementation this is simplest as just calling
-  `deadWorker`'s underlying gRPC client's `PollJob` once directly, or by giving `worker.Loop` a small
-  exported seam for "claim only." Exact shape finalized during implementation, same as Part 4's plan
-  flagged its own test scaffolding uncertainty ahead of time — the point of this step is the behavior it
-  proves.)
+  **Resolved during implementation:** added `Loop.PollOnce(ctx) (*jobv1.PollJobResponse, error)` — a small
+  exported seam that claims at most one job without executing or reporting on it. Used only by this test
+  to simulate a worker that claims a job and then crashes before finishing it.
 
-- [ ] **Step 2: Run, verify, commit**
+- [x] **Step 2: Run, verify, commit**
 
 Run: `go test ./internal/coordinator/... -run TestScheduling -v`
 
