@@ -564,9 +564,9 @@ Commit message: `feat(api): finalize REST surface including log streaming and ca
 **Files:** Add `github.com/modelcontextprotocol/go-sdk` (`v1.8.0`) to `go.mod`. Create
 `internal/mcpserver/server.go`, `internal/mcpserver/server_test.go`, `cmd/mcpserver/main.go`.
 
-- [ ] **Step 1:** `go get github.com/modelcontextprotocol/go-sdk@v1.8.0`
+- [x] **Step 1:** `go get github.com/modelcontextprotocol/go-sdk@v1.8.0`
 
-- [ ] **Step 2: Write the failing tests** — `internal/mcpserver/server_test.go`. The SDK's in-process
+- [x] **Step 2: Write the failing tests** — `internal/mcpserver/server_test.go`. The SDK's in-process
   `mcp.NewInMemoryTransports()` (client/server pair with no real subprocess) is the test seam — no stdio,
   no process spawn needed to test tool behavior:
 
@@ -707,7 +707,7 @@ func TestMCP_StreamLogs_ReturnsStdoutAndStderr(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run to verify failure, then implement** — `internal/mcpserver/server.go`:
+- [x] **Step 3: Run to verify failure, then implement** — `internal/mcpserver/server.go`:
 
 ```go
 package mcpserver
@@ -801,7 +801,7 @@ func cancelJob(store job.Store) mcp.ToolHandlerFor[jobIDArgs, any] {
   `IsError` result for a bad image — finalized during implementation against the SDK's actual generic
   constraints; the design (thin, direct `job.Store` calls, no new logic) is fixed, this is wiring.)
 
-- [ ] **Step 4: `cmd/mcpserver/main.go`** — mirrors `cmd/coordinator/main.go`'s startup sequence (replay
+- [x] **Step 4: `cmd/mcpserver/main.go`** — mirrors `cmd/coordinator/main.go`'s startup sequence (replay
   the event log, build the same `eventlog.Store`-wrapped `job.MemoryStore`) but serves MCP over stdio
   instead of REST/gRPC:
 
@@ -854,11 +854,17 @@ func main() {
 
   Add a `run-mcpserver` Makefile target (`go run ./cmd/mcpserver`) alongside `run-coordinator`/`run-worker`.
 
-- [ ] **Step 5: Run full suite, verify, commit**
+- [x] **Step 5: Run full suite, verify, commit**
 
 Run: `go build ./... && go test ./...`
 
 Commit message: `feat(mcp): add thin MCP server exposing submit_job, get_job_status, stream_logs, cancel_job`
+
+**Verified over real stdio, not just the in-memory transport tests:** built the real binary and drove it
+with a raw JSON-RPC handshake (`initialize` → `notifications/initialized` → `tools/list`), confirming all
+4 tools appear with correctly auto-inferred JSON schemas, then a real `tools/call` for `submit_job`
+returned a real queued job with a real ID. `TestMCP_CancelJob_RunningJobReturnsErrorResult` was also
+verified non-vacuous by temporarily swallowing `Cancel`'s error and confirming the test then failed.
 
 ---
 
