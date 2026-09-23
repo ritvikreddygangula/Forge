@@ -87,13 +87,49 @@ localhost:8080/jobs/$JOB_ID` from Step 4 returns the exact same status and stdou
 restart — rebuilt entirely by replaying the Redpanda log, with zero in-process continuity between the
 old coordinator process and the new one.
 
+### Running a 3-replica cluster
+
+Instead of one coordinator, you can run 3 replicas using `hashicorp/raft` for leader election — only
+the current leader accepts writes; the other two transparently forward write requests to it, so clients
+and workers can talk to any of the 3 REST/gRPC ports and it just works. Job data itself is still shared
+via the same Redpanda log every replica continuously tails (raft doesn't replicate job data — see
+`docs/plans/part-4-raft.md` for why).
+
+With `make compose-up` already running, start all 3 replicas (separate terminals, or backgrounded):
+
+```bash
+COORDINATOR_REPLICA_ID=node1 make run-coordinator
+COORDINATOR_REPLICA_ID=node2 make run-coordinator
+COORDINATOR_REPLICA_ID=node3 make run-coordinator
+```
+
+Each reads its own address (REST/gRPC/raft) from `deploy/raft-cluster.json` by matching its replica ID.
+Exactly one will log `entering leader state`. Submit a job against **any** of the 3 REST ports —
+including a follower's — and it works the same either way:
+
+```bash
+curl -s -X POST localhost:8082/jobs -H 'Content-Type: application/json' \
+  -d '{"image":"alpine:3.19","command":["echo","works from any replica"],"timeout_seconds":30}'
+```
+
+Kill whichever process is currently leader (`Ctrl-C` or `kill`) — the remaining 2 elect a new leader in
+well under 500ms (measured: 30-trial benchmark median ~106ms, p99 ~136ms — see `PROGRESS.md`), and
+already-submitted jobs remain readable from every replica throughout.
+
+Raft state persists to `data/<replica-id>/raft/` per replica, so a full restart of all 3 doesn't lose
+cluster history.
+
 ### Environment variables
 
-- `COORDINATOR_ADDR` — the coordinator's REST listen address (default `:8080`).
+- `COORDINATOR_ADDR` — the coordinator's REST listen address (default `:8080`); ignored in cluster mode
+  (the address comes from `deploy/raft-cluster.json` instead).
 - `COORDINATOR_GRPC_ADDR` — the coordinator's gRPC listen address (default `:9090`); on the worker side,
-  the same variable is the address it dials (default `localhost:9090`).
+  the same variable is the address it dials (default `localhost:9090`). Also ignored in cluster mode.
 - `REDPANDA_BROKERS` — comma-separated Redpanda broker address(es) the coordinator publishes to and
   replays from (default `localhost:9092`).
+- `COORDINATOR_REPLICA_ID` — opts into cluster mode when set (e.g. `node1`); must match an `id` in the
+  cluster config file. Unset (the default) runs a single standalone instance, exactly as in Parts 1-3.
+- `COORDINATOR_CLUSTER_CONFIG` — path to the cluster config JSON (default `deploy/raft-cluster.json`).
 
 ### Regenerating gRPC code
 
