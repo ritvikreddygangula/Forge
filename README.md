@@ -72,6 +72,26 @@ Within ~2 seconds, you should see `"status":"succeeded"` in the response, along 
 
 Note: the first run will also pull the `alpine:3.19` image, which can take longer than the timeout below allows — for a fresh machine, consider a higher `timeout_seconds` on the first try.
 
+### Cancelling a job
+
+```bash
+curl -s -X DELETE localhost:8080/jobs/$JOB_ID
+```
+
+Only works while the job is still `queued`. Once a worker has claimed it, cancelling returns
+`409 Conflict` instead — the pull-based worker model has no way to interrupt a job mid-execution, so
+that's a deliberate scope decision, not a bug (see `docs/plans/part-6-rest-mcp.md`).
+
+### Streaming logs
+
+```bash
+curl -N localhost:8080/jobs/$JOB_ID/logs/stream
+```
+
+Server-Sent Events (`event: stdout` / `event: stderr`), same captured output as the plain
+`GET /jobs/{id}/logs` above. The executor only captures a job's output as a complete buffer once it
+finishes, so this sends that buffer over a streaming wire format — not live tailing of a still-running job.
+
 ### Running multiple workers
 
 Just run `make run-worker` again in another terminal — each worker generates its own random ID on
@@ -128,6 +148,24 @@ already-submitted jobs remain readable from every replica throughout.
 
 Raft state persists to `data/<replica-id>/raft/` per replica, so a full restart of all 3 doesn't lose
 cluster history.
+
+### Running the MCP server
+
+The same 4 actions (submit, status, logs, cancel) are also exposed over MCP, for use with an
+MCP-aware client like Claude Desktop or the [MCP Inspector](https://github.com/modelcontextprotocol/inspector)
+CLI. It's a thin wrapper over the same job store REST uses — not a separate engine.
+
+```bash
+make run-mcpserver
+```
+
+It runs over stdio, so most MCP hosts are configured by pointing them at the command
+`go run ./cmd/mcpserver` (with `REDPANDA_BROKERS` set the same way as the coordinator, if not the
+default). To try it directly with the Inspector CLI:
+
+```bash
+npx @modelcontextprotocol/inspector go run ./cmd/mcpserver
+```
 
 ### Environment variables
 

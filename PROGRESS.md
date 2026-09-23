@@ -149,8 +149,37 @@ real `sleep 30` Docker container, and watching wall-clock behavior, surfaced it.
 timeout/liveness logic needs at least one test (even a manual one) where the timed thing actually takes
 longer than the timeout, not just a fake that returns instantly.
 
+## Part 6 — REST API polish + thin MCP layer → `part-6-interfaces-observability`
+- `docs: add Part 6 REST/MCP implementation plan` — bundled into the first code commit below (see that
+  commit's file list); design decisions locked in before code: cancel only applies to queued jobs (no
+  push channel exists to interrupt a running one — a stated scope decision, not a missing feature), and
+  streaming logs means the same buffered-then-sent shape gRPC's `StreamLogs` already has, not live tailing.
+- `add job cancellation for queued jobs` — `job.Status` gains `StatusCancelled`; `job.Store.Cancel(id)`
+  succeeds only while a job is still `queued`, returns `ErrNotCancellable` otherwise. Same interface-forced
+  coupling as Part 5's Task 5.1 hit again: adding `Cancel` to `job.Store` broke the build everywhere
+  `eventlog.Store` and coordinator's `failingStore` test double implement that interface, so event-log
+  replication (`EventJobCancelled`, `Rebuild`/`ApplyEvent` cases, `eventlog.Store.Cancel`) had to land in
+  the same commit rather than a separate one.
+- `feat: add job cancel and streaming logs endpoints` — `DELETE /jobs/{id}` (200/409/404), `GET
+  /jobs/{id}/logs/stream` (real SSE framing, `event: stdout`/`event: stderr`). Verified against a real
+  running coordinator, not just `httptest`: cancel's three outcomes confirmed by real `curl`, and the SSE
+  endpoint confirmed with `curl -N` against a job a real worker actually executed.
+- `feat: add thin MCP server for submit/status/logs/cancel` — new `internal/mcpserver` + `cmd/mcpserver`,
+  built on `github.com/modelcontextprotocol/go-sdk` v1.8.0, serving `submit_job`/`get_job_status`/
+  `stream_logs`/`cancel_job` over stdio as thin wrappers directly over the same `job.Store` REST uses — no
+  new engine, no leader forwarding (single-instance only, matching MCP's "thin, secondary interface"
+  framing). **Verified over real stdio, not just the SDK's in-memory test transport:** built the actual
+  binary and drove it with a raw JSON-RPC handshake — `tools/list` correctly showed all 4 tools with
+  auto-inferred JSON schemas, and a real `tools/call` for `submit_job` created a real queued job.
+- `test: add e2e tests for REST and MCP cancel/logs` — one full submit-through-cancel walk per surface
+  (`internal/coordinator/integration_test.go`, `internal/mcpserver/integration_test.go`), each proving a
+  completed job can't be cancelled (409 / error result) and a queued one can.
+
+No real distributed-systems concept in this Part — it's finishing the surface of the already-fault-tolerant
+core Part 5 completed, per this project's own framing (`PLAN.md`'s Branch 6 section).
+
 ## Next
 Branch 5 is complete — this is the resume-done checkpoint (see `CLAUDE.md`). Branch 6 (REST/MCP polish +
-observability) is still real, valuable work, but everything that makes this a distributed-systems story
-rather than a CRUD app now exists and is proven: HTTP → gRPC → event log → Raft → scheduling, each with a
-real (not mocked) end-to-end verification. Not started yet.
+observability) is in progress — Part 6 (REST/MCP) is done; Part 8 (observability: Prometheus/Grafana,
+structured JSON logging) and optionally Part 9 (CI dogfooding stretch) are next, each getting its own
+detailed plan written just before it starts, per the roadmap's per-Part planning rule.

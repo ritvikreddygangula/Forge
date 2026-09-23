@@ -890,13 +890,13 @@ Commit message: `test: add REST and MCP integration tests covering submit throug
 
 **Files:** `README.md`, `PROGRESS.md`.
 
-- [ ] **Step 1:** README: document `DELETE /jobs/{id}`, `GET /jobs/{id}/logs/stream`, and a "Running the
+- [x] **Step 1:** README: document `DELETE /jobs/{id}`, `GET /jobs/{id}/logs/stream`, and a "Running the
   MCP server" section (`make run-mcpserver`, plus how to point the MCP Inspector CLI or Claude Desktop's
   config at the built binary via stdio).
 
-- [ ] **Step 2:** `PROGRESS.md`: Part 6 commit log.
+- [x] **Step 2:** `PROGRESS.md`: Part 6 commit log.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Commit message: `docs: write full README local run instructions (docker compose up)`
 
