@@ -4,15 +4,35 @@ A distributed job orchestrator (mini GitHub Actions / mini Kubernetes Jobs) buil
 
 See [PLAN.md](./PLAN.md) for a readable overview of what's built and what's next, and [docs/spec.md](./docs/spec.md) for the full project spec, architecture, and build sequence.
 
-## Running locally
+## Measured results
 
-### Prerequisites
+Every number below comes from an actual run against this repo, not an estimate — see
+[docs/resume-metrics.md](./docs/resume-metrics.md) for full raw data, exact reproduction commands, and
+honest caveats (single machine, what each number does and doesn't prove).
 
-Ensure Docker/Colima is running. If you don't already have Colima started, run:
+| Metric | Result |
+|---|---|
+| Leader failover (real process kill, 5 trials) | median **145ms**, range 109–254ms, all under a 500ms target |
+| Leader failover (30-trial library benchmark) | median **103ms**, p99 170ms, 30/30 under 500ms |
+| Load test throughput (25 workers, real `docker run` jobs) | **16.7 jobs/sec** best, 500/500 succeeded every run |
+| Worker crash → job reassignment | **~7s** (real `kill -9` on a worker mid-job) |
+| Crash recovery correctness | **100%** — every acknowledged job's exact state survives a full coordinator process kill |
 
-```bash
-colima start
-```
+One finding worth calling out: doubling worker count (25→50) measurably *decreased* throughput, at both a
+2 CPU/2GB and a 4 CPU/4GB test VM. The bottleneck traced back to Docker daemon per-container overhead, not
+host CPU or worker count — a case of measuring instead of assuming "more workers = more throughput."
+Details in [docs/resume-metrics.md](./docs/resume-metrics.md).
+
+## Prerequisites
+
+- **Go 1.26+** — dependencies are pinned in `go.mod`/`go.sum` and resolve automatically on `go build`/`go test`; nothing extra to install.
+- **Docker or Colima** (Colima is what this project was built and tested against). If using Colima:
+  ```bash
+  colima start
+  ```
+- **`buf` + `protoc-gen-go`/`protoc-gen-go-grpc`** — only needed if you're changing `api/proto/jobv1/job.proto` and regenerating code; not required to build or run the project.
+
+## Quickstart
 
 ### Step 1: Start Redpanda
 
@@ -23,7 +43,8 @@ to be running first:
 make compose-up
 ```
 
-(`make compose-down` to stop it when you're done.)
+(`make compose-down` to stop it when you're done. This also starts Prometheus and Grafana — see
+"Metrics and dashboards" below.)
 
 ### Step 2: Start the coordinator
 
@@ -36,9 +57,9 @@ make run-coordinator
 
 You should see output like:
 ```
-INFO coordinator replayed event log jobs_restored=0
-INFO coordinator gRPC starting addr=:9090
-INFO coordinator HTTP starting addr=:8080
+{"time":"...","level":"INFO","msg":"coordinator replayed event log","jobs_restored":0}
+{"time":"...","level":"INFO","msg":"coordinator gRPC starting","addr":":9090"}
+{"time":"...","level":"INFO","msg":"coordinator HTTP starting","addr":":8080"}
 ```
 
 (`jobs_restored` will be non-zero if you've run jobs against this Redpanda before — see "Crash
@@ -56,8 +77,6 @@ The worker will begin polling the coordinator for jobs over gRPC.
 
 ### Step 4: Submit and track a job
 
-Using `curl`, submit a job to the coordinator and retrieve its status:
-
 ```bash
 # Submit a job and capture its ID
 JOB_ID=$(curl -s -X POST localhost:8080/jobs \
@@ -72,7 +91,23 @@ Within ~2 seconds, you should see `"status":"succeeded"` in the response, along 
 
 Note: the first run will also pull the `alpine:3.19` image, which can take longer than the timeout below allows — for a fresh machine, consider a higher `timeout_seconds` on the first try.
 
-### Cancelling a job
+## Example jobs
+
+A job is just "run this container image with this command." The orchestrator doesn't care what's
+inside — it schedules, executes, and reports the exit code + stdout/stderr the same way regardless.
+
+```bash
+# The simplest possible job — used by the load test to measure pure orchestration overhead
+{"image":"alpine:3.19","command":["true"],"timeout_seconds":30}
+
+# Run a Python test suite
+{"image":"python:3.11","command":["pytest","tests/"],"timeout_seconds":300}
+
+# Run a Go build
+{"image":"golang:1.23","command":["go","build","./..."],"timeout_seconds":300}
+```
+
+## Cancelling a job
 
 ```bash
 curl -s -X DELETE localhost:8080/jobs/$JOB_ID
@@ -82,7 +117,7 @@ Only works while the job is still `queued`. Once a worker has claimed it, cancel
 `409 Conflict` instead — the pull-based worker model has no way to interrupt a job mid-execution, so
 that's a deliberate scope decision, not a bug (see `docs/plans/part-6-rest-mcp.md`).
 
-### Streaming logs
+## Streaming logs
 
 ```bash
 curl -N localhost:8080/jobs/$JOB_ID/logs/stream
@@ -92,7 +127,7 @@ Server-Sent Events (`event: stdout` / `event: stderr`), same captured output as 
 `GET /jobs/{id}/logs` above. The executor only captures a job's output as a complete buffer once it
 finishes, so this sends that buffer over a streaming wire format — not live tailing of a still-running job.
 
-### Running multiple workers
+## Running multiple workers
 
 Just run `make run-worker` again in another terminal — each worker generates its own random ID on
 startup, so there's no config file to edit and no coordination needed, unlike the raft cluster's static
@@ -100,9 +135,9 @@ startup, so there's no config file to edit and no coordination needed, unlike th
 pull-based scheduler — a worker only asks for more work once it's idle), and if a worker stops polling
 mid-job (crash, `kill -9`, network partition), the coordinator notices within a few seconds and reassigns
 its in-flight job to another worker. See `docs/plans/part-5-scheduling.md` for how that failure detection
-works and `PROGRESS.md` for real measured throughput with 25 concurrent workers.
+works.
 
-### Crash recovery
+## Crash recovery
 
 Every job-state transition is durably logged to Redpanda, not just held in memory — so killing the
 coordinator doesn't lose job history. With a job already submitted and completed (Step 4 above), kill
@@ -117,7 +152,7 @@ localhost:8080/jobs/$JOB_ID` from Step 4 returns the exact same status and stdou
 restart — rebuilt entirely by replaying the Redpanda log, with zero in-process continuity between the
 old coordinator process and the new one.
 
-### Running a 3-replica cluster
+## Running a 3-replica cluster
 
 Instead of one coordinator, you can run 3 replicas using `hashicorp/raft` for leader election — only
 the current leader accepts writes; the other two transparently forward write requests to it, so clients
@@ -142,18 +177,18 @@ curl -s -X POST localhost:8082/jobs -H 'Content-Type: application/json' \
   -d '{"image":"alpine:3.19","command":["echo","works from any replica"],"timeout_seconds":30}'
 ```
 
-Kill whichever process is currently leader (`Ctrl-C` or `kill`) — the remaining 2 elect a new leader in
-well under 500ms (measured: 30-trial benchmark median ~106ms, p99 ~136ms — see `PROGRESS.md`), and
-already-submitted jobs remain readable from every replica throughout.
+Kill whichever process is currently leader (`Ctrl-C` or `kill`) — the remaining 2 elect a new leader well
+under 500ms (see "Measured results" above), and already-submitted jobs remain readable from every
+replica throughout.
 
 Raft state persists to `data/<replica-id>/raft/` per replica, so a full restart of all 3 doesn't lose
 cluster history.
 
-### Running the MCP server
+## Running the MCP server
 
 The same 4 actions (submit, status, logs, cancel) are also exposed over MCP, for use with an
 MCP-aware client like Claude Desktop or the [MCP Inspector](https://github.com/modelcontextprotocol/inspector)
-CLI. It's a thin wrapper over the same job store REST uses — not a separate engine.
+CLI.
 
 ```bash
 make run-mcpserver
@@ -167,7 +202,7 @@ default). To try it directly with the Inspector CLI:
 npx @modelcontextprotocol/inspector go run ./cmd/mcpserver
 ```
 
-### Metrics and dashboards
+## Metrics and dashboards
 
 `make compose-up` now also starts Prometheus (`http://localhost:9095`) and Grafana
 (`http://localhost:3000`, anonymous admin access — local dev only, never expose this setup beyond your
@@ -186,7 +221,7 @@ Metrics only move for whichever replica is actually handling writes (see
 configurable via `WORKER_METRICS_ADDR` (default `:9091`) if you're running more than one worker on the
 same machine — each needs its own port.
 
-### Environment variables
+## Environment variables
 
 - `COORDINATOR_ADDR` — the coordinator's REST listen address (default `:8080`); ignored in cluster mode
   (the address comes from `deploy/raft-cluster.json` instead).
@@ -200,7 +235,7 @@ same machine — each needs its own port.
   cluster config file. Unset (the default) runs a single standalone instance, exactly as in Parts 1-3.
 - `COORDINATOR_CLUSTER_CONFIG` — path to the cluster config JSON (default `deploy/raft-cluster.json`).
 
-### Regenerating gRPC code
+## Regenerating gRPC code
 
 The worker-facing transport (`PollJob`, `ReportResult`, `StreamLogs`) is defined in
 `api/proto/jobv1/job.proto` and generated into `api/proto/gen/jobv1/`. Generated code is committed, so
