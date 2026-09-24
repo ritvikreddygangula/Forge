@@ -167,12 +167,33 @@ default). To try it directly with the Inspector CLI:
 npx @modelcontextprotocol/inspector go run ./cmd/mcpserver
 ```
 
+### Metrics and dashboards
+
+`make compose-up` now also starts Prometheus (`http://localhost:9095`) and Grafana
+(`http://localhost:3000`, anonymous admin access — local dev only, never expose this setup beyond your
+own machine). Both auto-provision on startup: Prometheus scrapes the coordinator's `/metrics`
+(`:8080`) and the worker's `/metrics` (`:9091` by default) via `host.docker.internal`, since both run on
+the host rather than inside compose; Grafana's "Forge" dashboard is provisioned from
+`deploy/grafana/dashboards/forge.json`, no manual setup needed.
+
+The dashboard has 3 panels, each reading a metric the coordinator/worker record directly:
+- **Job Throughput** — completions per second, broken out by status
+- **Job Duration p95** — end-to-end latency from job creation to completion
+- **Job Failure Rate** — failed completions per second
+
+Metrics only move for whichever replica is actually handling writes (see
+`docs/plans/part-8-observability.md` for why, in cluster mode). The worker's metrics port is
+configurable via `WORKER_METRICS_ADDR` (default `:9091`) if you're running more than one worker on the
+same machine — each needs its own port.
+
 ### Environment variables
 
 - `COORDINATOR_ADDR` — the coordinator's REST listen address (default `:8080`); ignored in cluster mode
   (the address comes from `deploy/raft-cluster.json` instead).
 - `COORDINATOR_GRPC_ADDR` — the coordinator's gRPC listen address (default `:9090`); on the worker side,
   the same variable is the address it dials (default `localhost:9090`). Also ignored in cluster mode.
+- `WORKER_METRICS_ADDR` — the worker's Prometheus `/metrics` listen address (default `:9091`). Give each
+  worker its own value if running more than one on the same machine.
 - `REDPANDA_BROKERS` — comma-separated Redpanda broker address(es) the coordinator publishes to and
   replays from (default `localhost:9092`).
 - `COORDINATOR_REPLICA_ID` — opts into cluster mode when set (e.g. `node1`); must match an `id` in the

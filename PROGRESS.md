@@ -178,8 +178,42 @@ longer than the timeout, not just a fake that returns instantly.
 No real distributed-systems concept in this Part — it's finishing the surface of the already-fault-tolerant
 core Part 5 completed, per this project's own framing (`PLAN.md`'s Branch 6 section).
 
+## Part 8 — Observability → `part-6-interfaces-observability` (same branch as Part 6)
+- `docs: add Part 8 observability plan` — design locked in before code: metrics live in a new
+  `internal/metrics.Store` decorator (same pattern `eventlog.Store` established in Part 3); `cmd/mcpserver`
+  must log to stderr, not stdout, since stdout is the live MCP JSON-RPC channel — a real correctness
+  constraint, not a style choice; local Prometheus scrapes `host.docker.internal` since the
+  coordinator/worker run on the host, not inside compose.
+- `feat: expose Prometheus metrics on coordinator and worker` — `internal/metrics.Store` wraps `job.Store`,
+  recording `jobs_created_total`, `jobs_completed_total{status}`, `jobs_cancelled_total`,
+  `jobs_reassigned_total`, `job_duration_seconds`; worker gets its own new `/metrics` HTTP endpoint
+  (`WORKER_METRICS_ADDR`, default `:9091`) plus `worker_jobs_executed_total{status}` and
+  `worker_execution_duration_seconds`. All 6 metrics tests use before/after deltas rather than absolute
+  values, since these are process-global `promauto` metrics — caught one vacuous-test trap along the way:
+  `testutil.CollectAndCount` counts metric *series* (always 1 for a histogram), not observations, so the
+  first version of the duration test passed regardless of whether `Observe` was ever called. Fixed with a
+  direct `dto.Metric` read of the histogram's sample count, then verified non-vacuous by temporarily
+  removing the `Observe` call and confirming the test then failed. Also verified against real running
+  binaries: submitted a real job, confirmed both `/metrics` endpoints reflected it correctly.
+- `chore: add Prometheus and Grafana to docker-compose` — `deploy/prometheus.yml`, Grafana provisioning
+  (datasource + dashboard-as-code), a 3-panel dashboard (throughput, p95 latency, failure rate). **A real
+  bug caught by verifying against a live instance, not by reading the JSON:** the dashboard's panels
+  referenced a datasource by `uid: "prometheus"`, but without pinning that UID explicitly in the
+  datasource provisioning file, Grafana auto-generates a random one — every panel would have silently
+  failed to resolve. Found by querying Prometheus through Grafana's own datasource proxy for all 3 panel
+  expressions and confirming real data came back; fixed by pinning `uid: prometheus` explicitly.
+- `refactor: switch logging to structured JSON via log/slog` — coordinator and worker log JSON to stdout;
+  `cmd/mcpserver` logs JSON to **stderr** instead, deliberately, since its stdout carries the live MCP
+  JSON-RPC protocol. Verified for real: piped a running coordinator's output through `jq` to confirm valid
+  JSON, and re-ran Part 6's raw stdio handshake against `mcpserver` to confirm stdout stayed pure
+  JSON-RPC with the log line correctly landing on stderr instead.
+
+No real distributed-systems concept in this Part either — same "finish the surface" framing as Part 6.
+Part 9 (CI dogfooding stretch) was explicitly not attempted — a deliberate scope call, not an oversight;
+it was always a stretch goal, not required for the resume-done story (Part 5 already is that).
+
 ## Next
 Branch 5 is complete — this is the resume-done checkpoint (see `CLAUDE.md`). Branch 6 (REST/MCP polish +
-observability) is in progress — Part 6 (REST/MCP) is done; Part 8 (observability: Prometheus/Grafana,
-structured JSON logging) and optionally Part 9 (CI dogfooding stretch) are next, each getting its own
-detailed plan written just before it starts, per the roadmap's per-Part planning rule.
+observability, Parts 6+8) is now complete and ready for its single combined PR to `main`. Part 9 was
+skipped by deliberate choice. Branch 7 (cloud/Terraform/k3s) remains on hold, not revisited until
+explicitly greenlit.

@@ -535,17 +535,17 @@ Commit message: `refactor: switch logging to structured JSON via log/slog`
 
 **Files:** `README.md`, `PROGRESS.md`, `CLAUDE.md`.
 
-- [ ] **Step 1:** README: "Metrics and dashboards" section — `make compose-up` now also starts
+- [x] **Step 1:** README: "Metrics and dashboards" section — `make compose-up` now also starts
   Prometheus (`:9095`) and Grafana (`:3000`, anonymous admin, local dev only), what the 3 dashboard panels
   show, and the worker's new `WORKER_METRICS_ADDR` env var.
 
-- [ ] **Step 2:** `PROGRESS.md`: Part 8 commit log.
+- [x] **Step 2:** `PROGRESS.md`: Part 8 commit log.
 
-- [ ] **Step 3:** `CLAUDE.md`: update "Where things stand" — if Part 9 (CI dogfooding stretch) isn't
+- [x] **Step 3:** `CLAUDE.md`: update "Where things stand" — if Part 9 (CI dogfooding stretch) isn't
   being attempted, note that Branch 6 is complete and ready for its single combined PR; if Part 9 is
   attempted, this becomes an interim update instead.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Commit message: `docs: add Grafana dashboard notes, update PROGRESS.md for Part 8`
 
