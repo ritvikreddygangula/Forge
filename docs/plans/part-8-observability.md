@@ -404,7 +404,7 @@ Commit message: `feat: expose Prometheus metrics on coordinator and worker`
 `deploy/grafana/provisioning/datasources/prometheus.yml` (new),
 `deploy/grafana/provisioning/dashboards/dashboard.yml` (new), `deploy/grafana/dashboards/forge.json` (new).
 
-- [ ] **Step 1: `deploy/prometheus.yml`**
+- [x] **Step 1: `deploy/prometheus.yml`**
 
 ```yaml
 global:
@@ -418,7 +418,7 @@ scrape_configs:
       - targets: ["host.docker.internal:9091"]
 ```
 
-- [ ] **Step 2: Add services to `deploy/docker-compose.yml`**
+- [x] **Step 2: Add services to `deploy/docker-compose.yml`**
 
 ```yaml
   prometheus:
@@ -447,17 +447,19 @@ scrape_configs:
   Docker Desktop/Colima's built-in resolution — belt and suspenders. Grafana anonymous admin access is a
   deliberate local-dev-only simplification, stated here, not left for someone to discover is insecure.)
 
-- [ ] **Step 3: Grafana provisioning** — `deploy/grafana/provisioning/datasources/prometheus.yml`:
+- [x] **Step 3: Grafana provisioning** — `deploy/grafana/provisioning/datasources/prometheus.yml`:
 
 ```yaml
 apiVersion: 1
 datasources:
   - name: Prometheus
+    uid: prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
     isDefault: true
 ```
+  (`uid: prometheus` is pinned explicitly, not left to auto-generate — see the real bug this caught below.)
 
   `deploy/grafana/provisioning/dashboards/dashboard.yml`:
 
@@ -475,7 +477,7 @@ providers:
   exact panel JSON finalized during implementation against a real running Grafana instance rather than
   hand-authored blind, same posture as Part 4/5 flagged their own minor implementation-time seams.
 
-- [ ] **Step 4: ⚠️ Manual step — verify for real**
+- [x] **Step 4: ⚠️ Manual step — verify for real**
 
 Run `make compose-up`, confirm `docker compose -f deploy/docker-compose.yml ps` shows `forge-prometheus`
 and `forge-grafana` healthy, open `http://localhost:9095/targets` and confirm both scrape targets show
@@ -483,7 +485,18 @@ and `forge-grafana` healthy, open `http://localhost:9095/targets` and confirm bo
 first), then open `http://localhost:3000` and confirm the Forge dashboard renders with real data after
 submitting a few jobs.
 
-- [ ] **Step 5: Commit**
+**A real bug this verification caught, not a hypothetical:** the dashboard JSON's panels reference
+`datasource.uid: "prometheus"`, but without an explicit `uid` set in the datasource provisioning YAML,
+Grafana auto-generates one (e.g. `PBFA97CFB590B2093`) — every panel would have silently failed to resolve
+its datasource. Caught by actually querying Prometheus through Grafana's own datasource proxy
+(`/api/datasources/proxy/uid/prometheus/api/v1/query`) for all 3 panel expressions and confirming real
+data came back, not by reading the JSON and assuming it was right. Fixed by pinning `uid: prometheus` in
+the datasource file. (A stale auto-generated datasource in Grafana's internal DB then needed the container
+recreated, not just restarted, to fully clear — `docker compose rm -sf grafana && docker compose up -d
+grafana`, since this setup has no persistent volume for Grafana's own database, only for
+provisioning/dashboard files.)
+
+- [x] **Step 5: Commit**
 
 Commit message: `chore: add Prometheus and Grafana to docker-compose`
 

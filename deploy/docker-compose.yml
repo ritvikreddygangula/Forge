@@ -18,3 +18,32 @@ services:
       - --advertise-kafka-addr=PLAINTEXT://localhost:9092
     ports:
       - "9092:9092"
+
+  # Coordinator/worker run on the host (`make run-coordinator`/`make run-worker`),
+  # not as compose services, so Prometheus scrapes host.docker.internal — see
+  # docs/plans/part-8-observability.md's Design section for why. extra_hosts
+  # makes that resolve on plain Linux Docker too, not just Docker
+  # Desktop/Colima's built-in resolution.
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: forge-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9095:9090"
+
+  # Anonymous admin access is a deliberate local-dev-only simplification —
+  # never do this for anything reachable outside your own machine.
+  grafana:
+    image: grafana/grafana:latest
+    container_name: forge-grafana
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
