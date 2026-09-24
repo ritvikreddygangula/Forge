@@ -14,6 +14,8 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	coordinatorAddr := os.Getenv("COORDINATOR_GRPC_ADDR")
 	if coordinatorAddr == "" {
 		coordinatorAddr = "localhost:9090"

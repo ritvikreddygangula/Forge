@@ -15,6 +15,13 @@ import (
 )
 
 func main() {
+	// stderr, NOT stdout — mcp.StdioTransport uses stdout for the live MCP
+	// JSON-RPC protocol exchange with the client. A log line written to
+	// stdout here would corrupt every message a real MCP client parses from
+	// that stream (confirmed by smoke-testing this binary over raw stdio in
+	// Part 6). See docs/plans/part-8-observability.md's Design section.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+
 	brokersEnv := os.Getenv("REDPANDA_BROKERS")
 	if brokersEnv == "" {
 		brokersEnv = "localhost:9092"

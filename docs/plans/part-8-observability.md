@@ -506,26 +506,26 @@ Commit message: `chore: add Prometheus and Grafana to docker-compose`
 
 **Files:** `cmd/coordinator/main.go`, `cmd/worker/main.go`, `cmd/mcpserver/main.go`.
 
-- [ ] **Step 1:** `cmd/coordinator/main.go` and `cmd/worker/main.go`, first line of `main()`:
+- [x] **Step 1:** `cmd/coordinator/main.go` and `cmd/worker/main.go`, first line of `main()`:
 
 ```go
 slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 ```
 
-- [ ] **Step 2:** `cmd/mcpserver/main.go` — **stderr, not stdout** (see this doc's Design section: stdout
+- [x] **Step 2:** `cmd/mcpserver/main.go` — **stderr, not stdout** (see this doc's Design section: stdout
   is the live MCP JSON-RPC channel):
 
 ```go
 slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 ```
 
-- [ ] **Step 3: ⚠️ Manual step — verify for real**
+- [x] **Step 3: ⚠️ Manual step — verify for real**
 
 Run `make run-coordinator`, confirm each log line is now valid single-line JSON (e.g. pipe through
 `jq .` and confirm it parses). Run `make run-mcpserver` with a real MCP client connected (or the raw
 stdio smoke test from Part 6) and confirm stdout is still clean JSON-RPC only — no log lines mixed in.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Commit message: `refactor: switch logging to structured JSON via log/slog`
 

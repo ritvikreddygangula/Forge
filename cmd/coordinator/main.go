@@ -26,6 +26,8 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	httpAddr := os.Getenv("COORDINATOR_ADDR")
 	if httpAddr == "" {
 		httpAddr = ":8080"
