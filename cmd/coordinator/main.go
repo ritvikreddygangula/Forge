@@ -21,10 +21,13 @@ import (
 	"github.com/ritvikreddygangula/forge/internal/coordinator"
 	"github.com/ritvikreddygangula/forge/internal/eventlog"
 	"github.com/ritvikreddygangula/forge/internal/job"
+	"github.com/ritvikreddygangula/forge/internal/metrics"
 	"github.com/ritvikreddygangula/forge/internal/worker"
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	httpAddr := os.Getenv("COORDINATOR_ADDR")
 	if httpAddr == "" {
 		httpAddr = ":8080"
@@ -65,7 +68,7 @@ func main() {
 	slog.Info("coordinator replayed event log", "jobs_restored", len(rebuiltJobs))
 
 	producer := eventlog.NewKafkaProducer(brokers, eventlog.DefaultTopic)
-	store := eventlog.NewStore(baseStore, producer)
+	store := metrics.NewStore(eventlog.NewStore(baseStore, producer))
 
 	// Cluster mode is opt-in via COORDINATOR_REPLICA_ID. Unset, and every
 	// single-instance behavior from Parts 1-3 is unchanged: no raft node, no

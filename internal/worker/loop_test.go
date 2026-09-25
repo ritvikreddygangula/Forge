@@ -7,10 +7,13 @@ import (
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
 
 	jobv1 "github.com/ritvikreddygangula/forge/api/proto/gen/jobv1"
+	"github.com/ritvikreddygangula/forge/internal/metrics"
 	"github.com/ritvikreddygangula/forge/internal/worker"
 )
 
@@ -144,5 +147,42 @@ func TestLoop_RunOnce_NonZeroExitReportsFailed(t *testing.T) {
 	}
 	if fake.reported.Status != "failed" {
 		t.Fatalf("expected status failed, got %v", fake.reported.Status)
+	}
+}
+
+// workerExecutionSampleCount reads the total number of observations
+// recorded so far for WorkerExecutionDurationSeconds. testutil.CollectAndCount
+// counts metric series (always 1 for a histogram), not observations.
+func workerExecutionSampleCount(t *testing.T) uint64 {
+	t.Helper()
+	var m dto.Metric
+	if err := metrics.WorkerExecutionDurationSeconds.Write(&m); err != nil {
+		t.Fatalf("failed to write histogram metric: %v", err)
+	}
+	return m.GetHistogram().GetSampleCount()
+}
+
+func TestLoop_RunOnce_RecordsExecutionMetrics(t *testing.T) {
+	fake := &fakeJobServer{pollResp: &jobv1.PollJobResponse{
+		HasJob: true,
+		Job:    &jobv1.Job{Id: "job-3", Image: "alpine", Command: []string{"true"}, TimeoutSeconds: 10},
+	}}
+	l := newTestLoop(t, fake)
+	l.Execute = func(ctx context.Context, image string, command []string, timeoutSeconds int) (worker.ExecResult, error) {
+		return worker.ExecResult{ExitCode: 0}, nil
+	}
+
+	beforeCounter := testutil.ToFloat64(metrics.WorkerJobsExecutedTotal.WithLabelValues("succeeded"))
+	beforeCount := workerExecutionSampleCount(t)
+
+	if err := l.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce returned error: %v", err)
+	}
+
+	if after := testutil.ToFloat64(metrics.WorkerJobsExecutedTotal.WithLabelValues("succeeded")); after != beforeCounter+1 {
+		t.Fatalf("expected worker_jobs_executed_total{status=succeeded} to increment by 1, got %v -> %v", beforeCounter, after)
+	}
+	if after := workerExecutionSampleCount(t); after != beforeCount+1 {
+		t.Fatalf("expected one new worker_execution_duration_seconds observation, got %d -> %d", beforeCount, after)
 	}
 }

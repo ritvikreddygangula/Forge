@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/ritvikreddygangula/forge/internal/job"
 )
 
@@ -39,6 +41,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /jobs", s.handleSubmitJob)
 	s.mux.HandleFunc("GET /jobs/{id}", s.handleGetJob)
 	s.mux.HandleFunc("GET /jobs/{id}/logs", s.handleGetJobLogs)
+	s.mux.HandleFunc("DELETE /jobs/{id}", s.handleCancelJob)
+	s.mux.HandleFunc("GET /jobs/{id}/logs/stream", s.handleStreamJobLogs)
+	s.mux.Handle("GET /metrics", promhttp.Handler())
 }
 
 type submitJobRequest struct {
@@ -182,5 +187,61 @@ func (s *Server) handleGetJobLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	if _, err := fmt.Fprintf(w, "--- stdout ---\n%s\n--- stderr ---\n%s\n", j.Stdout, j.Stderr); err != nil {
 		slog.Error("failed to write response", "error", err)
+	}
+}
+
+func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
+	if !s.raftGate.IsLeader() {
+		s.forwardToLeader(w, r)
+		return
+	}
+	id := r.PathValue("id")
+	j, err := s.store.Cancel(id)
+	if err != nil {
+		switch {
+		case errors.Is(err, job.ErrNotFound):
+			http.Error(w, "job not found", http.StatusNotFound)
+		case errors.Is(err, job.ErrNotCancellable):
+			http.Error(w, "job is not cancellable (already running or terminal)", http.StatusConflict)
+		default:
+			http.Error(w, "failed to cancel job", http.StatusInternalServerError)
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(toJobResponse(j)); err != nil {
+		slog.Error("failed to encode response", "error", err)
+	}
+}
+
+// handleStreamJobLogs sends the same buffered stdout/stderr as
+// GRPCServer.StreamLogs, framed as SSE — same "not live tailing yet" honesty
+// as its gRPC sibling (see docs/plans/part-6-rest-mcp.md). Not leader-gated,
+// same reasoning as handleGetJob: a read from this replica's own local copy.
+func (s *Server) handleStreamJobLogs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	j, err := s.store.Get(id)
+	if err != nil {
+		if errors.Is(err, job.ErrNotFound) {
+			http.Error(w, "job not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get job", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	flusher, _ := w.(http.Flusher)
+	if j.Stdout != "" {
+		_, _ = fmt.Fprintf(w, "event: stdout\ndata: %s\n\n", strings.ReplaceAll(j.Stdout, "\n", "\ndata: "))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	if j.Stderr != "" {
+		_, _ = fmt.Fprintf(w, "event: stderr\ndata: %s\n\n", strings.ReplaceAll(j.Stderr, "\n", "\ndata: "))
+		if flusher != nil {
+			flusher.Flush()
+		}
 	}
 }

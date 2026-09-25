@@ -1,4 +1,4 @@
-.PHONY: build test test-integration lint run-coordinator run-worker proto
+.PHONY: build test test-integration lint run-coordinator run-worker run-mcpserver proto
 
 build:
 	go build ./...
@@ -26,3 +26,6 @@ run-coordinator:
 
 run-worker:
 	go run ./cmd/worker
+
+run-mcpserver:
+	go run ./cmd/mcpserver

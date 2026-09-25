@@ -1,152 +1,118 @@
 # Forge
 
-A distributed job orchestrator (mini GitHub Actions / mini Kubernetes Jobs) built from scratch in Go, with real fault tolerance: crash-safe coordinator, Raft leader election, and a durable Kafka/Redpanda event log.
+Forge is a distributed job orchestrator built in Go. Submit a job (a container image plus a command),
+and a pool of workers picks it up, runs it in Docker, and reports back the result. It stays correct
+through real failures: a coordinator crash doesn't lose job history, a worker crash reassigns its
+in-flight job to another worker, and a 3-node cluster survives losing its leader.
 
-See [PLAN.md](./PLAN.md) for a readable overview of what's built and what's next, and [docs/spec.md](./docs/spec.md) for the full project spec, architecture, and build sequence.
+Under the hood: gRPC between coordinator and workers, a Kafka/Redpanda event log for durable state,
+Raft for leader election across coordinator replicas.
 
-## Running locally
+## Example jobs
+
+A job is a container image plus a command. Forge runs it in Docker and reports back the exit code,
+stdout, and stderr.
+
+```json
+{"image": "alpine:3.19", "command": ["true"], "timeout_seconds": 30}
+```
+```json
+{"image": "python:3.11", "command": ["pytest", "tests/"], "timeout_seconds": 300}
+```
+```json
+{"image": "golang:1.23", "command": ["go", "build", "./..."], "timeout_seconds": 300}
+```
+
+## Setup and run
 
 ### Prerequisites
 
-Ensure Docker/Colima is running. If you don't already have Colima started, run:
+- Go 1.26 or later
+- Docker or Colima, running
 
-```bash
-colima start
-```
-
-### Step 1: Start Redpanda
-
-The coordinator publishes every job-state transition to Redpanda and replays it on startup, so it needs
-to be running first:
+### 1. Start Redpanda
 
 ```bash
 make compose-up
 ```
 
-(`make compose-down` to stop it when you're done.)
-
-### Step 2: Start the coordinator
-
-In one terminal, start the coordinator. It listens on two ports: REST on `:8080` (for submitting jobs
-and checking status) and gRPC on `:9090` (for the worker):
+### 2. Start the coordinator
 
 ```bash
 make run-coordinator
 ```
 
-You should see output like:
-```
-INFO coordinator replayed event log jobs_restored=0
-INFO coordinator gRPC starting addr=:9090
-INFO coordinator HTTP starting addr=:8080
-```
+Listens on `:8080` (REST) and `:9090` (gRPC).
 
-(`jobs_restored` will be non-zero if you've run jobs against this Redpanda before — see "Crash
-recovery" below.)
-
-### Step 3: Start the worker
-
-In another terminal, start the worker pointing to the coordinator's gRPC port:
+### 3. Start a worker
 
 ```bash
 make run-worker
 ```
 
-The worker will begin polling the coordinator for jobs over gRPC.
-
-### Step 4: Submit and track a job
-
-Using `curl`, submit a job to the coordinator and retrieve its status:
+### 4. Submit a job
 
 ```bash
-# Submit a job and capture its ID
 JOB_ID=$(curl -s -X POST localhost:8080/jobs \
   -H 'Content-Type: application/json' \
   -d '{"image":"alpine:3.19","command":["echo","hello from forge"],"timeout_seconds":30}' | jq -r '.id')
 
-# Poll the status (within ~2 seconds, the worker will execute it)
 curl -s localhost:8080/jobs/$JOB_ID
 ```
 
-Within ~2 seconds, you should see `"status":"succeeded"` in the response, along with the echoed stdout.
+Within a couple of seconds you'll see `"status":"succeeded"` and the echoed stdout.
 
-Note: the first run will also pull the `alpine:3.19` image, which can take longer than the timeout below allows — for a fresh machine, consider a higher `timeout_seconds` on the first try.
+## Features
 
-### Running multiple workers
-
-Just run `make run-worker` again in another terminal — each worker generates its own random ID on
-startup, so there's no config file to edit and no coordination needed, unlike the raft cluster's static
-`deploy/raft-cluster.json` below. The coordinator hands out jobs to whichever worker polls next (a simple
-pull-based scheduler — a worker only asks for more work once it's idle), and if a worker stops polling
-mid-job (crash, `kill -9`, network partition), the coordinator notices within a few seconds and reassigns
-its in-flight job to another worker. See `docs/plans/part-5-scheduling.md` for how that failure detection
-works and `PROGRESS.md` for real measured throughput with 25 concurrent workers.
-
-### Crash recovery
-
-Every job-state transition is durably logged to Redpanda, not just held in memory — so killing the
-coordinator doesn't lose job history. With a job already submitted and completed (Step 4 above), kill
-the coordinator (Ctrl-C) and start a fresh one:
-
+**Cancel a queued job**
 ```bash
-make run-coordinator
+curl -s -X DELETE localhost:8080/jobs/$JOB_ID
 ```
 
-The log line changes to `jobs_restored=1` (or however many jobs you've run), and the same `curl
-localhost:8080/jobs/$JOB_ID` from Step 4 returns the exact same status and stdout as before the
-restart — rebuilt entirely by replaying the Redpanda log, with zero in-process continuity between the
-old coordinator process and the new one.
+**Stream logs**
+```bash
+curl -N localhost:8080/jobs/$JOB_ID/logs/stream
+```
 
-### Running a 3-replica cluster
+**Run multiple workers.** Run `make run-worker` again in another terminal. Each worker gets its own ID
+automatically. If a worker crashes mid-job, the coordinator reassigns the job to another worker within
+a few seconds.
 
-Instead of one coordinator, you can run 3 replicas using `hashicorp/raft` for leader election — only
-the current leader accepts writes; the other two transparently forward write requests to it, so clients
-and workers can talk to any of the 3 REST/gRPC ports and it just works. Job data itself is still shared
-via the same Redpanda log every replica continuously tails (raft doesn't replicate job data — see
-`docs/plans/part-4-raft.md` for why).
-
-With `make compose-up` already running, start all 3 replicas (separate terminals, or backgrounded):
-
+**Run a 3-replica cluster**
 ```bash
 COORDINATOR_REPLICA_ID=node1 make run-coordinator
 COORDINATOR_REPLICA_ID=node2 make run-coordinator
 COORDINATOR_REPLICA_ID=node3 make run-coordinator
 ```
+Only the leader accepts writes; the other two forward automatically. Submit against any of the 3 REST
+ports (`:8080`, `:8081`, `:8082`) and it works the same way. If the leader dies, the remaining two elect
+a new one and already-submitted jobs stay readable throughout.
 
-Each reads its own address (REST/gRPC/raft) from `deploy/raft-cluster.json` by matching its replica ID.
-Exactly one will log `entering leader state`. Submit a job against **any** of the 3 REST ports —
-including a follower's — and it works the same either way:
-
+**MCP server**
 ```bash
-curl -s -X POST localhost:8082/jobs -H 'Content-Type: application/json' \
-  -d '{"image":"alpine:3.19","command":["echo","works from any replica"],"timeout_seconds":30}'
+make run-mcpserver
 ```
+Exposes submit, status, logs, and cancel as MCP tools over stdio, for use with Claude Desktop or the
+[MCP Inspector](https://github.com/modelcontextprotocol/inspector).
 
-Kill whichever process is currently leader (`Ctrl-C` or `kill`) — the remaining 2 elect a new leader in
-well under 500ms (measured: 30-trial benchmark median ~106ms, p99 ~136ms — see `PROGRESS.md`), and
-already-submitted jobs remain readable from every replica throughout.
+**Metrics and dashboards.** `make compose-up` also starts Prometheus (`localhost:9095`) and Grafana
+(`localhost:3000`) with a dashboard for job throughput, latency, and failure rate.
 
-Raft state persists to `data/<replica-id>/raft/` per replica, so a full restart of all 3 doesn't lose
-cluster history.
+## Measured results
 
-### Environment variables
+| Metric | Result |
+|---|---|
+| Leader failover, real process kill | median 145ms |
+| Leader failover, 30-trial benchmark | median 103ms, p99 170ms |
+| Load test throughput, 25 workers, real Docker jobs | 12.9 to 16.7 jobs/sec, 100% success |
+| Worker crash to job reassignment | about 7 seconds |
+| Crash recovery | 100%, every job's state survives a coordinator restart |
 
-- `COORDINATOR_ADDR` — the coordinator's REST listen address (default `:8080`); ignored in cluster mode
-  (the address comes from `deploy/raft-cluster.json` instead).
-- `COORDINATOR_GRPC_ADDR` — the coordinator's gRPC listen address (default `:9090`); on the worker side,
-  the same variable is the address it dials (default `localhost:9090`). Also ignored in cluster mode.
-- `REDPANDA_BROKERS` — comma-separated Redpanda broker address(es) the coordinator publishes to and
-  replays from (default `localhost:9092`).
-- `COORDINATOR_REPLICA_ID` — opts into cluster mode when set (e.g. `node1`); must match an `id` in the
-  cluster config file. Unset (the default) runs a single standalone instance, exactly as in Parts 1-3.
-- `COORDINATOR_CLUSTER_CONFIG` — path to the cluster config JSON (default `deploy/raft-cluster.json`).
+## Environment variables
 
-### Regenerating gRPC code
-
-The worker-facing transport (`PollJob`, `ReportResult`, `StreamLogs`) is defined in
-`api/proto/jobv1/job.proto` and generated into `api/proto/gen/jobv1/`. Generated code is committed, so
-this is only needed when the `.proto` file changes:
-
-```bash
-make proto   # requires buf and the protoc-gen-go / protoc-gen-go-grpc plugins on PATH
-```
+- `COORDINATOR_ADDR`: REST listen address (default `:8080`)
+- `COORDINATOR_GRPC_ADDR`: gRPC listen address (default `:9090`); also what the worker dials
+- `WORKER_METRICS_ADDR`: worker's metrics endpoint (default `:9091`)
+- `REDPANDA_BROKERS`: broker addresses (default `localhost:9092`)
+- `COORDINATOR_REPLICA_ID`: sets cluster mode when present (e.g. `node1`)
+- `COORDINATOR_CLUSTER_CONFIG`: path to cluster config (default `deploy/raft-cluster.json`)

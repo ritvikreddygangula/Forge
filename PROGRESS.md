@@ -149,8 +149,71 @@ real `sleep 30` Docker container, and watching wall-clock behavior, surfaced it.
 timeout/liveness logic needs at least one test (even a manual one) where the timed thing actually takes
 longer than the timeout, not just a fake that returns instantly.
 
+## Part 6 — REST API polish + thin MCP layer → `part-6-interfaces-observability`
+- `docs: add Part 6 REST/MCP implementation plan` — bundled into the first code commit below (see that
+  commit's file list); design decisions locked in before code: cancel only applies to queued jobs (no
+  push channel exists to interrupt a running one — a stated scope decision, not a missing feature), and
+  streaming logs means the same buffered-then-sent shape gRPC's `StreamLogs` already has, not live tailing.
+- `add job cancellation for queued jobs` — `job.Status` gains `StatusCancelled`; `job.Store.Cancel(id)`
+  succeeds only while a job is still `queued`, returns `ErrNotCancellable` otherwise. Same interface-forced
+  coupling as Part 5's Task 5.1 hit again: adding `Cancel` to `job.Store` broke the build everywhere
+  `eventlog.Store` and coordinator's `failingStore` test double implement that interface, so event-log
+  replication (`EventJobCancelled`, `Rebuild`/`ApplyEvent` cases, `eventlog.Store.Cancel`) had to land in
+  the same commit rather than a separate one.
+- `feat: add job cancel and streaming logs endpoints` — `DELETE /jobs/{id}` (200/409/404), `GET
+  /jobs/{id}/logs/stream` (real SSE framing, `event: stdout`/`event: stderr`). Verified against a real
+  running coordinator, not just `httptest`: cancel's three outcomes confirmed by real `curl`, and the SSE
+  endpoint confirmed with `curl -N` against a job a real worker actually executed.
+- `feat: add thin MCP server for submit/status/logs/cancel` — new `internal/mcpserver` + `cmd/mcpserver`,
+  built on `github.com/modelcontextprotocol/go-sdk` v1.8.0, serving `submit_job`/`get_job_status`/
+  `stream_logs`/`cancel_job` over stdio as thin wrappers directly over the same `job.Store` REST uses — no
+  new engine, no leader forwarding (single-instance only, matching MCP's "thin, secondary interface"
+  framing). **Verified over real stdio, not just the SDK's in-memory test transport:** built the actual
+  binary and drove it with a raw JSON-RPC handshake — `tools/list` correctly showed all 4 tools with
+  auto-inferred JSON schemas, and a real `tools/call` for `submit_job` created a real queued job.
+- `test: add e2e tests for REST and MCP cancel/logs` — one full submit-through-cancel walk per surface
+  (`internal/coordinator/integration_test.go`, `internal/mcpserver/integration_test.go`), each proving a
+  completed job can't be cancelled (409 / error result) and a queued one can.
+
+No real distributed-systems concept in this Part — it's finishing the surface of the already-fault-tolerant
+core Part 5 completed, per this project's own framing (`PLAN.md`'s Branch 6 section).
+
+## Part 8 — Observability → `part-6-interfaces-observability` (same branch as Part 6)
+- `docs: add Part 8 observability plan` — design locked in before code: metrics live in a new
+  `internal/metrics.Store` decorator (same pattern `eventlog.Store` established in Part 3); `cmd/mcpserver`
+  must log to stderr, not stdout, since stdout is the live MCP JSON-RPC channel — a real correctness
+  constraint, not a style choice; local Prometheus scrapes `host.docker.internal` since the
+  coordinator/worker run on the host, not inside compose.
+- `feat: expose Prometheus metrics on coordinator and worker` — `internal/metrics.Store` wraps `job.Store`,
+  recording `jobs_created_total`, `jobs_completed_total{status}`, `jobs_cancelled_total`,
+  `jobs_reassigned_total`, `job_duration_seconds`; worker gets its own new `/metrics` HTTP endpoint
+  (`WORKER_METRICS_ADDR`, default `:9091`) plus `worker_jobs_executed_total{status}` and
+  `worker_execution_duration_seconds`. All 6 metrics tests use before/after deltas rather than absolute
+  values, since these are process-global `promauto` metrics — caught one vacuous-test trap along the way:
+  `testutil.CollectAndCount` counts metric *series* (always 1 for a histogram), not observations, so the
+  first version of the duration test passed regardless of whether `Observe` was ever called. Fixed with a
+  direct `dto.Metric` read of the histogram's sample count, then verified non-vacuous by temporarily
+  removing the `Observe` call and confirming the test then failed. Also verified against real running
+  binaries: submitted a real job, confirmed both `/metrics` endpoints reflected it correctly.
+- `chore: add Prometheus and Grafana to docker-compose` — `deploy/prometheus.yml`, Grafana provisioning
+  (datasource + dashboard-as-code), a 3-panel dashboard (throughput, p95 latency, failure rate). **A real
+  bug caught by verifying against a live instance, not by reading the JSON:** the dashboard's panels
+  referenced a datasource by `uid: "prometheus"`, but without pinning that UID explicitly in the
+  datasource provisioning file, Grafana auto-generates a random one — every panel would have silently
+  failed to resolve. Found by querying Prometheus through Grafana's own datasource proxy for all 3 panel
+  expressions and confirming real data came back; fixed by pinning `uid: prometheus` explicitly.
+- `refactor: switch logging to structured JSON via log/slog` — coordinator and worker log JSON to stdout;
+  `cmd/mcpserver` logs JSON to **stderr** instead, deliberately, since its stdout carries the live MCP
+  JSON-RPC protocol. Verified for real: piped a running coordinator's output through `jq` to confirm valid
+  JSON, and re-ran Part 6's raw stdio handshake against `mcpserver` to confirm stdout stayed pure
+  JSON-RPC with the log line correctly landing on stderr instead.
+
+No real distributed-systems concept in this Part either — same "finish the surface" framing as Part 6.
+Part 9 (CI dogfooding stretch) was explicitly not attempted — a deliberate scope call, not an oversight;
+it was always a stretch goal, not required for the resume-done story (Part 5 already is that).
+
 ## Next
 Branch 5 is complete — this is the resume-done checkpoint (see `CLAUDE.md`). Branch 6 (REST/MCP polish +
-observability) is still real, valuable work, but everything that makes this a distributed-systems story
-rather than a CRUD app now exists and is proven: HTTP → gRPC → event log → Raft → scheduling, each with a
-real (not mocked) end-to-end verification. Not started yet.
+observability, Parts 6+8) is now complete and ready for its single combined PR to `main`. Part 9 was
+skipped by deliberate choice. Branch 7 (cloud/Terraform/k3s) remains on hold, not revisited until
+explicitly greenlit.

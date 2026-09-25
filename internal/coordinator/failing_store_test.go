@@ -36,3 +36,7 @@ func (failingStore) Complete(id string, status job.Status, stdout, stderr string
 func (failingStore) RequeueRunning(workerID string) ([]*job.Job, error) {
 	return nil, errStoreFailure
 }
+
+func (failingStore) Cancel(id string) (*job.Job, error) {
+	return nil, errStoreFailure
+}

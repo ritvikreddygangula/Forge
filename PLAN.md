@@ -50,7 +50,7 @@ in-memory store. Everything else in the diagram gets added one Part at a time.
 | Coordinator↔worker transport | plain HTTP now → gRPC from Part 2 |
 | Event log | Redpanda (Kafka-wire-compatible, no ZooKeeper/JVM) |
 | Leader election | `hashicorp/raft`, embedded in the coordinator binary |
-| Metadata store | Postgres via `pgx`, migrations via `golang-migrate` |
+| Metadata store | ~~Postgres via `pgx`~~ — superseded by the event-sourced Redpanda log; see "Scope calls" below |
 | Job sandbox | Docker (via Colima locally), driven by `os/exec` |
 | External interfaces | REST (primary), thin optional MCP server (Branch 6, see "Scope calls" below) |
 | Logging/metrics | `log/slog`, Prometheus + Grafana (Branch 6) |
@@ -59,7 +59,7 @@ in-memory store. Everything else in the diagram gets added one Part at a time.
 
 ## Scope calls (and why)
 
-Two decisions worth being explicit about, since they shape what "done" means:
+Three decisions worth being explicit about, since they shape what "done" means:
 
 - **Raft means the `hashicorp/raft` library, never hand-rolled consensus.** This was never on the
   table as "implement Raft from scratch" — that's a multi-month research-grade undertaking (leader
@@ -78,6 +78,15 @@ Two decisions worth being explicit about, since they shape what "done" means:
   thin, optional wrapper in Branch 6 — same four actions as REST, no more effort than that — precisely
   *because* it's cheap once REST exists, not because it's central. `docs/spec.md` and
   `docs/plans/roadmap.md` reflect this.
+- **Postgres was never built — superseded by the event log, not forgotten (clarified 2026-09-24).** The
+  original spec/roadmap called for Postgres as the "metadata store" for queryable job/worker history. In
+  practice, the event-sourced Kafka/Redpanda log plus in-memory replay-on-startup (Part 3 onward) already
+  gives durable, correct job state, and the actual REST/gRPC/MCP surface only ever needs one query shape —
+  get a job by ID — which the in-memory store already serves directly. Postgres would only earn its keep
+  if this project needed complex queries, filtering, or long-term historical reporting across a large job
+  history, and it never does. Building it now would be unused scope creep on an otherwise finished
+  project, not a real gap — this note exists so the mismatch between `docs/spec.md`'s architecture list
+  and the actual code is a documented decision, not an accidental omission.
 
 ## Manual / off-repo steps
 

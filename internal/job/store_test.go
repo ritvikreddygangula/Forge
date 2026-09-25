@@ -1,6 +1,7 @@
 package job_test
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -366,5 +367,64 @@ func TestMemoryStore_Rebuild_ClearsPriorState(t *testing.T) {
 	}
 	if claimed == nil || claimed.ID != "only-this-one" {
 		t.Fatalf("expected only the rebuilt job to be claimable, got %+v", claimed)
+	}
+}
+
+func TestMemoryStore_Cancel_QueuedJobBecomesCancelled(t *testing.T) {
+	s := job.NewMemoryStore()
+	created, _ := s.Create("alpine", []string{"true"}, 10)
+
+	got, err := s.Cancel(created.ID)
+	if err != nil {
+		t.Fatalf("Cancel returned error: %v", err)
+	}
+	if got.Status != job.StatusCancelled {
+		t.Fatalf("expected cancelled, got %+v", got)
+	}
+
+	fromGet, err := s.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if fromGet.Status != job.StatusCancelled {
+		t.Fatalf("expected Get to reflect cancellation, got %+v", fromGet)
+	}
+}
+
+func TestMemoryStore_Cancel_RunningJobReturnsErrNotCancellable(t *testing.T) {
+	s := job.NewMemoryStore()
+	created, _ := s.Create("alpine", []string{"true"}, 10)
+	if _, err := s.ClaimNext("worker-1"); err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+
+	_, err := s.Cancel(created.ID)
+	if !errors.Is(err, job.ErrNotCancellable) {
+		t.Fatalf("expected ErrNotCancellable, got %v", err)
+	}
+}
+
+func TestMemoryStore_Cancel_UnknownJobReturnsErrNotFound(t *testing.T) {
+	s := job.NewMemoryStore()
+	_, err := s.Cancel("does-not-exist")
+	if !errors.Is(err, job.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestMemoryStore_Cancel_RemovesFromClaimOrder(t *testing.T) {
+	// A cancelled job must never be handed out by a later ClaimNext.
+	s := job.NewMemoryStore()
+	created, _ := s.Create("alpine", []string{"true"}, 10)
+	if _, err := s.Cancel(created.ID); err != nil {
+		t.Fatalf("Cancel returned error: %v", err)
+	}
+
+	claimed, err := s.ClaimNext("worker-1")
+	if err != nil {
+		t.Fatalf("ClaimNext returned error: %v", err)
+	}
+	if claimed != nil {
+		t.Fatalf("expected no claimable job after cancelling the only one, got %+v", claimed)
 	}
 }

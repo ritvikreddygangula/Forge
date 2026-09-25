@@ -13,6 +13,7 @@ const (
 	EventJobClaimed   EventType = "job_claimed"
 	EventJobCompleted EventType = "job_completed"
 	EventJobRequeued  EventType = "job_requeued"
+	EventJobCancelled EventType = "job_cancelled"
 )
 
 // Event is the durable, replayable record of one job-state transition.
@@ -82,6 +83,11 @@ func Rebuild(events []Event) []*job.Job {
 				j.WorkerID = ""
 				j.UpdatedAt = e.Timestamp
 			}
+		case EventJobCancelled:
+			if j, ok := jobs[e.JobID]; ok {
+				j.Status = job.StatusCancelled
+				j.UpdatedAt = e.Timestamp
+			}
 		}
 	}
 
@@ -109,5 +115,7 @@ func ApplyEvent(store *job.MemoryStore, e Event) {
 		store.ApplyCompleted(e.JobID, e.Status, e.Stdout, e.Stderr, e.ExitCode, e.Timestamp)
 	case EventJobRequeued:
 		store.ApplyRequeued(e.JobID, e.Timestamp)
+	case EventJobCancelled:
+		store.ApplyCancelled(e.JobID, e.Timestamp)
 	}
 }
